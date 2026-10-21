@@ -69,12 +69,15 @@ def check_memory():
         print("物理メモリ: 不明")
         return
     print(f"物理メモリ: {mem:.1f} GB")
-    if mem < 8:
+    # 判定の境目はアプリ本体（src/classifier/model_select.py）に合わせる
+    if mem < 3.5:
         print("推奨: Ollama なしの内容ベース分類を推奨")
-    elif mem < 16:
-        print("推奨: 小型モデル（例: qwen2.5:1.5b / qwen2.5:3b）を推奨")
+    elif mem < 7.5:
+        print("推奨: qwen2.5:1.5b（約 1GB）")
+    elif mem < 15:
+        print("推奨: qwen3:4b（約 2.6GB）")
     else:
-        print("推奨: qwen2.5:7b 程度まで可")
+        print("推奨: qwen3:8b（約 5.2GB。GPU なしでは 8B 程度が実用上の上限）")
 
 
 def check_disk():

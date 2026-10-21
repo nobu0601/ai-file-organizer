@@ -16,6 +16,7 @@ from typing import Callable
 
 from classifier.base import ClassificationResult, Classifier, DocInput
 from classifier.heuristic import HeuristicClassifier
+from classifier.model_select import recommended
 from classifier.ollama import OllamaClassifier, OllamaClient, OllamaError
 from classifier.validation import evaluate
 from history.db import (F_FAILED, F_MOVED, F_PENDING, F_PROCESSING, F_READY, F_REVIEW, F_SKIPPED, HistoryDB,
@@ -27,6 +28,7 @@ from scanner.parsers import ContentExtractor
 from scanner.scanner import FileSnapshot, iter_files
 from settings.config import Settings, WatchFolder, load_settings, save_settings
 from settings.paths import AppPaths
+from settings.system import total_memory_gb
 from taxonomy.consistency import Mismatch, apply_fix, check_consistency, collect_history_paths
 from taxonomy.model import Taxonomy, TaxonomyError, new_category_id
 from taxonomy.store import TaxonomyStore
@@ -82,24 +84,40 @@ class Engine:
             self.queue.quiet_seconds = s.stability_quiet_seconds
             self.queue.max_attempts = s.max_retries
 
+        self._llm: Classifier | None = None
+        o = s.ollama
+        if o.enabled:
+            try:
+                self._llm = OllamaClassifier(OllamaClient(o.base_url, o.model, o.timeout_seconds), self.heuristic)
+            except OllamaError as e:
+                log.warning("Ollama 設定が無効です: %s", e)
+
     @property
     def classifier(self) -> Classifier:
         if self._classifier_override is not None:
             return self._classifier_override
+        return self._llm or self.heuristic
+
+    def _client(self) -> OllamaClient:
         o = self.settings.ollama
-        if o.enabled:
-            try:
-                return OllamaClassifier(OllamaClient(o.base_url, o.model, o.timeout_seconds), self.heuristic)
-            except OllamaError as e:
-                log.warning("Ollama 設定が無効です: %s", e)
-        return self.heuristic
+        return OllamaClient(o.base_url, o.model, o.timeout_seconds)
 
     def test_ollama(self) -> tuple[bool, str]:
-        o = self.settings.ollama
         try:
-            return OllamaClient(o.base_url, o.model, o.timeout_seconds).available()
+            return self._client().available()
         except OllamaError as e:
             return False, str(e)
+
+    def recommended_model(self) -> tuple[str, float, float | None]:
+        """(推奨モデル名, ダウンロードサイズ GB, この PC のメモリ GB)"""
+        ram = total_memory_gb()
+        c = recommended(ram)
+        return c.name, c.size_gb, ram
+
+    def pull_model(self, name: str) -> str:
+        self._client().pull(name)
+        self.rebuild()   # 自動選択をやり直す
+        return f"{name} をダウンロードしました"
 
     def save_settings(self) -> None:
         save_settings(self.settings, self.paths.settings_file)

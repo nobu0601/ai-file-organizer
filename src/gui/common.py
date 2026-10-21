@@ -62,6 +62,29 @@ class UiBridge:
             cb(value)
 
 
+class ScrollFrame(ttk.Frame):
+    """縦スクロールできる領域。中身は self.inner に配置する。"""
+
+    def __init__(self, master: tk.Misc) -> None:
+        super().__init__(master)
+        self.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        sb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = ttk.Frame(self.canvas)
+        win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(win, width=e.width))
+        # マウスホイール（ポインタがこの領域上にあるときだけ）
+        self.inner.bind("<Enter>", lambda e: self.canvas.bind_all("<MouseWheel>", self._wheel))
+        self.inner.bind("<Leave>", lambda e: self.canvas.unbind_all("<MouseWheel>"))
+
+    def _wheel(self, event) -> None:
+        self.canvas.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+
+
 def open_path(path: str | Path) -> None:
     """エクスプローラー（または既定のアプリ）で開く。ファイルを実行するのではなく関連付けで開くだけ。"""
     p = str(path)

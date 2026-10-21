@@ -29,8 +29,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers["Content-Length"])
-        _Handler.received.append(json.loads(self.rfile.read(length)))
-        self._send({"response": _Handler.response_text})
+        body = json.loads(self.rfile.read(length))
+        _Handler.received.append(body)
+        if self.path == "/api/pull":
+            self._send({"status": "success"})
+        else:
+            self._send({"response": _Handler.response_text})
 
 
 @pytest.fixture
@@ -62,3 +66,32 @@ def test_missing_model_and_bad_json(server):
             OllamaClient(server, "qwen2.5:3b").generate_json("p")
     finally:
         _Handler.response_text = json.dumps({"category_id": None, "confidence": 0.1, "reason": "test"})
+
+
+def test_installed_check_is_exact(server):
+    # qwen2.5:3b しか無いとき、同じ系列の 7b を「インストール済み」と誤判定しない
+    ok, msg = OllamaClient(server, "qwen2.5:7b").available()
+    assert not ok
+
+
+def test_auto_selects_best_installed_model(server):
+    c = OllamaClient(server, "auto", ram_gb=16)
+    ok, msg = c.available()
+    assert ok and "qwen2.5:3b" in msg      # 16GB 機でも、入っている中で最良のものを使う
+    c.generate_json("p")
+    assert _Handler.received[-1]["model"] == "qwen2.5:3b"
+    small = OllamaClient(server, "auto", ram_gb=2)
+    ok, msg = small.available()
+    assert not ok and "推奨" in msg
+
+
+def test_pull_and_qwen3_think_disabled(server):
+    c = OllamaClient(server, "qwen3:8b")
+    c.pull("qwen3:8b")
+    assert _Handler.received[-1] == {"model": "qwen3:8b", "stream": False}
+    _Handler.response_text = "<think>考え中</think>" + json.dumps({"category_id": None, "confidence": 0.2})
+    try:
+        out = c.generate_json("p")
+    finally:
+        _Handler.response_text = json.dumps({"category_id": None, "confidence": 0.1, "reason": "test"})
+    assert out["confidence"] == 0.2 and _Handler.received[-1]["think"] is False

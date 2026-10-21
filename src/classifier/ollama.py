@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
 from classifier.base import CategorySuggestion, ClassificationResult, Classifier, DocInput, TaxonomyDraft
 from classifier.heuristic import HeuristicClassifier
+from classifier.model_select import AUTO, choose_installed, is_installed, recommended
+from settings.system import total_memory_gb
 from taxonomy.model import Taxonomy
 
 log = logging.getLogger(__name__)
@@ -28,6 +31,7 @@ SYSTEM_PROMPT = (
 )
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 class OllamaError(RuntimeError):
@@ -35,13 +39,19 @@ class OllamaError(RuntimeError):
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout: float = 60.0, allow_remote: bool = False) -> None:
+    """model に "auto" を指定すると、インストール済みモデルから PC に合う最良のものを使う。"""
+
+    def __init__(self, base_url: str, model: str, timeout: float = 60.0, allow_remote: bool = False,
+                 ram_gb: float | None = None) -> None:
         host = urlparse(base_url).hostname or ""
         if host not in LOCAL_HOSTS and not allow_remote:
             raise OllamaError("ローカル以外の LLM サーバーへの接続は初期設定で無効です")
         self.base_url = base_url.rstrip("/")
-        self.model = model
+        self.requested = (model or AUTO).strip()
+        self.model = self.requested
         self.timeout = timeout
+        self.ram_gb = ram_gb if ram_gb is not None else total_memory_gb()
+        self._resolved = self.requested != AUTO
 
     def _request(self, path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -53,25 +63,63 @@ class OllamaClient:
         try:
             with opener.open(req, timeout=timeout or self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = json.loads(e.read().decode("utf-8")).get("error", "")
+            except (ValueError, OSError):
+                pass
+            raise OllamaError(f"HTTP {e.code}: {detail or e.reason}") from e
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise OllamaError(str(e)) from e
 
+    def installed_models(self, timeout: float = 3) -> list[str]:
+        tags = self._request("/api/tags", timeout=timeout)
+        return [m.get("name", "") for m in tags.get("models", []) if m.get("name")]
+
+    def resolve(self) -> str:
+        """auto の場合に使うモデルを決める。決められなければ OllamaError。"""
+        if self._resolved:
+            return self.model
+        chosen = choose_installed(self.installed_models(), self.ram_gb)
+        if not chosen:
+            rec = recommended(self.ram_gb)
+            raise OllamaError(f"この PC に合うモデルがインストールされていません（推奨: {rec.name}）")
+        self.model, self._resolved = chosen, True
+        return chosen
+
     def available(self) -> tuple[bool, str]:
         try:
-            tags = self._request("/api/tags", timeout=3)
+            names = self.installed_models()
         except OllamaError as e:
             return False, f"Ollama に接続できません: {e}"
-        names = [m.get("name", "") for m in tags.get("models", [])]
-        if not any(n == self.model or n.split(":")[0] == self.model.split(":")[0] for n in names):
-            return False, f"モデル {self.model} がインストールされていません（ollama pull {self.model}）"
-        return True, "接続できました"
+        if self.requested == AUTO:
+            try:
+                m = self.resolve()
+            except OllamaError as e:
+                return False, str(e)
+            return True, f"接続できました（自動選択: {m}）"
+        if not is_installed(self.model, names):
+            return False, f"モデル {self.model} がインストールされていません"
+        return True, f"接続できました（{self.model}）"
+
+    def pull(self, model: str, timeout: float = 7200) -> None:
+        """モデルをダウンロードする（数 GB。完了まで戻らない）。"""
+        resp = self._request("/api/pull", {"model": model, "stream": False}, timeout=timeout)
+        if resp.get("status") != "success":
+            raise OllamaError(f"ダウンロードに失敗しました: {resp}")
 
     def generate_json(self, prompt: str) -> dict:
-        resp = self._request("/api/generate", {
-            "model": self.model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": "json",
+        model = self.resolve()
+        payload = {
+            "model": model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": "json",
             "stream": False, "options": {"temperature": 0.1, "seed": 42},
-        })
-        text = resp.get("response", "")
+        }
+        if model.startswith("qwen3"):
+            # 思考モードは分類には不要で、CPU では大幅に遅くなるため無効にする
+            payload["think"] = False
+        resp = self._request("/api/generate", payload)
+        text = _THINK.sub("", resp.get("response", "")).strip()
         try:
             out = json.loads(text)
         except ValueError as e:

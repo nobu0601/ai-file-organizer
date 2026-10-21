@@ -50,7 +50,8 @@ DEFAULT_SENSITIVE_KEYWORDS = [
 class OllamaSettings:
     enabled: bool = False
     base_url: str = "http://127.0.0.1:11434"
-    model: str = "qwen2.5:3b"
+    # "auto": インストール済みモデルから PC のメモリに合う最良のものを自動で使う
+    model: str = "auto"
     timeout_seconds: float = 60.0
 
 

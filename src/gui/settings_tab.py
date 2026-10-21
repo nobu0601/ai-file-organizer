@@ -7,7 +7,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from gui.common import UiBridge, open_path
+from gui.common import ScrollFrame, UiBridge, open_path
 from safety.rules import is_within
 from organizer.engine import Engine
 
@@ -45,8 +45,9 @@ class SettingsTab(ttk.Frame):
         self.ui = ui
         self.on_change = on_change
         s = engine.settings
-        canvas = ttk.Frame(self)
-        canvas.pack(fill="both", expand=True)
+        # 保存ボタンは常に見えるよう下に固定し、設定項目はスクロールできるようにする
+        ttk.Button(self, text="設定を保存", command=self.save).pack(side="bottom", anchor="e", pady=6)
+        canvas = ScrollFrame(self).inner
         g = ttk.Frame(canvas)
         g.pack(fill="x")
         r = 0
@@ -102,6 +103,14 @@ class SettingsTab(ttk.Frame):
         ttk.Label(lf, text="モデル").grid(row=2, column=0, sticky="w")
         ttk.Entry(lf, textvariable=self.v_model, width=40).grid(row=2, column=1, sticky="w")
         ttk.Button(lf, text="接続テスト", command=self.test_ollama).grid(row=1, column=2, rowspan=2, padx=6)
+        name, size, ram = engine.recommended_model()
+        ram_txt = f"{ram:.0f}GB" if ram else "不明"
+        ttk.Label(lf, foreground="#444", text=(
+            f"「auto」にすると、インストール済みのモデルからこの PC（メモリ {ram_txt}）で動く最も性能の良いものを使います。\n"
+            f"この PC の推奨モデル: {name}（約 {size}GB）")).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self._rec_model = name
+        ttk.Button(lf, text=f"推奨モデル {name} をダウンロード", command=self.pull_model).grid(
+            row=4, column=0, columnspan=2, sticky="w", pady=4)
 
         other = ttk.LabelFrame(canvas, text="その他", padding=6)
         other.pack(fill="x")
@@ -111,7 +120,6 @@ class SettingsTab(ttk.Frame):
         bar.pack(fill="x", pady=4)
         ttk.Button(bar, text="データ保存先を開く", command=lambda: open_path(engine.paths.root)).pack(side="left")
         ttk.Button(bar, text="ログを開く", command=lambda: open_path(engine.paths.log_dir)).pack(side="left", padx=4)
-        ttk.Button(self, text="設定を保存", command=self.save).pack(anchor="e", pady=6)
 
     @staticmethod
     def _text(master, items, height=4) -> tk.Text:
@@ -132,6 +140,21 @@ class SettingsTab(ttk.Frame):
         self._apply_ollama()
         self.ui.run(self.engine.test_ollama,
                     lambda res: (messagebox.showinfo if res[0] else messagebox.showwarning)("Ollama", res[1]))
+
+    def pull_model(self) -> None:
+        name = self._rec_model
+        if not messagebox.askyesno("モデルのダウンロード",
+                                   f"Ollama で {name} をダウンロードします（数 GB、回線により数分〜数十分）。\n"
+                                   "Ollama が起動している必要があります。続けますか？"):
+            return
+        self._apply_ollama()
+
+        def done(msg):
+            messagebox.showinfo("モデルのダウンロード", msg + "\n設定で「Ollama を使う」をオンにすると利用できます。")
+            self.on_change()
+
+        self.ui.run(lambda: self.engine.pull_model(name), done,
+                    lambda e: messagebox.showerror("モデルのダウンロード", f"失敗しました: {e}"))
 
     def _apply_ollama(self) -> None:
         o = self.engine.settings.ollama
