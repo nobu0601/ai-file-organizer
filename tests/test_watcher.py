@@ -89,8 +89,9 @@ def test_files_added_while_stopped_are_found_on_startup(make_engine, sample_file
     assert e2.scan_now("startup") == 1     # 処理済みのファイルは再処理しない
     item = e2.queue.snapshot()[0]
     assert item.path == str(f) and item.origin == "startup"
+    # scan_now はバックグラウンドの処理スレッドも起動するため、どちらが処理しても完了を待つ
     e2.process_queue_once()
-    assert e2.db.get_file(f).status == F_READY
+    assert wait_until(lambda: (r := e2.db.get_file(f)) is not None and r.status == F_READY)
 
 
 def test_organize_root_inside_watch_folder_no_loop(make_engine, dirs, sample_files):
