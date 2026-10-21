@@ -10,6 +10,7 @@ import fnmatch
 import math
 import re
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 from classifier.base import (CategorySuggestion, ClassificationResult, Classifier, DocInput, DraftCategory,
@@ -111,7 +112,10 @@ class HeuristicClassifier(Classifier):
         )
 
     # ---------- 分類体系の考案 ----------
-    def propose_taxonomy(self, docs: list[DocInput], taxonomy: Taxonomy) -> TaxonomyDraft:
+    def propose_taxonomy(self, docs: list[DocInput], taxonomy: Taxonomy,
+                         grouper: Callable[[list[DocInput]], list[list[DocInput]] | None] | None = None
+                         ) -> TaxonomyDraft:
+        """grouper を渡すと、最上位のまとめ方をそれに任せる（None を返したら単語ベースでまとめる）。"""
         draft = TaxonomyDraft(source=self.name)
         remaining: list[DocInput] = []
         for d in docs:
@@ -124,7 +128,8 @@ class HeuristicClassifier(Classifier):
         if not remaining:
             return draft
         used_names = {c.category_name.lower() for c in taxonomy.active()}
-        self._build(remaining, None, 0, draft, used_names)
+        groups = grouper(remaining) if grouper else None
+        self._build(remaining, None, 0, draft, used_names, groups)
         assigned = {m for c in draft.new_categories for m in c.members}
         draft.unassigned = [str(d.path) for d in remaining if str(d.path) not in assigned]
         if draft.unassigned:
@@ -132,9 +137,9 @@ class HeuristicClassifier(Classifier):
         return draft
 
     def _build(self, docs: list[DocInput], parent_id: str | None, depth: int, draft: TaxonomyDraft,
-               used_names: set[str]) -> None:
+               used_names: set[str], groups: list[list[DocInput]] | None = None) -> None:
         threshold = CLUSTER_THRESHOLD if depth == 0 else SUBCLUSTER_THRESHOLD + 0.08 * (depth - 1)
-        clusters = cluster(docs, threshold)
+        clusters = groups if groups is not None else cluster(docs, threshold)
         for members in clusters:
             if len(members) < MIN_CLUSTER:
                 continue
@@ -249,8 +254,10 @@ def rank_terms(members: list[DocInput], universe: list[DocInput]) -> list[str]:
         df_all.update(d.features.weights.keys())
     N = len(universe)
     scored = []
+    # 意味でまとめたグループは共通語が無いことがあるため、その場合は 1 件だけに出る語も使う
+    min_df = 2 if n >= 2 and any(c >= 2 for c in df_in.values()) else 1
     for t, c in df_in.items():
-        if n >= 2 and c < 2:
+        if c < min_df:
             continue
         share = c / n
         rarity = math.log((1 + N) / (1 + df_all[t])) + 1.0

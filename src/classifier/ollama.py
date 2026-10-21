@@ -18,6 +18,8 @@ from urllib.parse import urlparse
 from classifier.base import CategorySuggestion, ClassificationResult, Classifier, DocInput, TaxonomyDraft
 from classifier.heuristic import HeuristicClassifier
 from classifier.model_select import AUTO, choose_installed, is_installed, recommended
+from classifier.semantic import (EMBED_MODEL, MAX_SEMANTIC_DOCS, SEMANTIC_THRESHOLD, average_linkage,
+                                 embed_text)
 from settings.system import total_memory_gb
 from taxonomy.model import Taxonomy
 
@@ -109,6 +111,22 @@ class OllamaClient:
         if resp.get("status") != "success":
             raise OllamaError(f"ダウンロードに失敗しました: {resp}")
 
+    def has_model(self, model: str) -> bool:
+        return is_installed(model, self.installed_models())
+
+    def embed(self, texts: list[str], model: str, batch: int = 16) -> list[list[float]]:
+        """文章の意味ベクトルを返す。件数が多い場合は分けて送る。"""
+        out: list[list[float]] = []
+        for i in range(0, len(texts), batch):
+            chunk = texts[i:i + batch]
+            resp = self._request("/api/embed", {"model": model, "input": chunk})
+            vecs = resp.get("embeddings")
+            if (not isinstance(vecs, list) or len(vecs) != len(chunk)
+                    or not all(isinstance(v, list) and v for v in vecs)):
+                raise OllamaError("埋め込みの応答形式が不正です")
+            out.extend([float(x) for x in v] for v in vecs)
+        return out
+
     def generate_json(self, prompt: str) -> dict:
         model = self.resolve()
         payload = {
@@ -195,11 +213,31 @@ class OllamaClassifier(Classifier):
                      f"一致キーワード: {', '.join(matched[:6]) or 'なし'}"],
         )
 
+    def _semantic_groups(self, docs: list[DocInput], notes: list[str]) -> list[list[DocInput]] | None:
+        """埋め込みモデルがあれば意味の近さでまとめる。使えなければ None（単語ベースでまとめる）。"""
+        if len(docs) < 2:
+            return None
+        if len(docs) > MAX_SEMANTIC_DOCS:
+            notes.append(f"ファイルが {MAX_SEMANTIC_DOCS} 件を超えるため、単語の一致でまとめました")
+            return None
+        try:
+            if not self.client.has_model(EMBED_MODEL):
+                notes.append(f"意味でまとめるには {EMBED_MODEL} が必要です（設定タブからダウンロードできます）")
+                return None
+            vecs = self.client.embed([embed_text(d.path.stem, d.parse.text) for d in docs], EMBED_MODEL)
+        except OllamaError as e:
+            self.last_error = str(e)
+            notes.append("埋め込みモデルが利用できないため、単語の一致でまとめました")
+            return None
+        return [[docs[i] for i in g] for g in average_linkage(vecs, SEMANTIC_THRESHOLD)]
+
     def propose_taxonomy(self, docs: list[DocInput], taxonomy: Taxonomy) -> TaxonomyDraft:
-        draft = self.fallback.propose_taxonomy(docs, taxonomy)
+        notes: list[str] = []
+        draft = self.fallback.propose_taxonomy(docs, taxonomy, grouper=lambda ds: self._semantic_groups(ds, notes))
+        draft.notes = notes + draft.notes
         if not draft.new_categories:
             return draft
-        # 構造（クラスタ）は内容ベースで決め、名前と説明だけ LLM に考えてもらう
+        # 構造（クラスタ）は意味ベクトルまたは内容ベースで決め、名前と説明だけ LLM に考えてもらう
         by_path = {str(d.path): d for d in docs}
         for cat in draft.new_categories:
             members = [by_path[m] for m in cat.members if m in by_path][:8]

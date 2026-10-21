@@ -7,6 +7,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from classifier.semantic import EMBED_MODEL, EMBED_SIZE_GB
 from gui.common import ScrollFrame, UiBridge, open_path
 from safety.rules import is_within
 from organizer.engine import Engine
@@ -144,7 +145,8 @@ class SettingsTab(ttk.Frame):
     def pull_model(self) -> None:
         name = self._rec_model
         if not messagebox.askyesno("モデルのダウンロード",
-                                   f"Ollama で {name} をダウンロードします（数 GB、回線により数分〜数十分）。\n"
+                                   f"Ollama で {name} と、ファイルを意味でまとめるための {EMBED_MODEL}（約 {EMBED_SIZE_GB}GB）を"
+                                   "ダウンロードします（数 GB、回線により数分〜数十分）。\n"
                                    "Ollama が起動している必要があります。続けますか？"):
             return
         self._apply_ollama()

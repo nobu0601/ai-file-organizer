@@ -33,6 +33,9 @@ class _Handler(BaseHTTPRequestHandler):
         _Handler.received.append(body)
         if self.path == "/api/pull":
             self._send({"status": "success"})
+        elif self.path == "/api/embed":
+            n = len(body["input"])
+            self._send({"embeddings": [[float(i), 1.0] for i in range(n)] if body["model"] != "bad" else []})
         else:
             self._send({"response": _Handler.response_text})
 
@@ -95,3 +98,14 @@ def test_pull_and_qwen3_think_disabled(server):
     finally:
         _Handler.response_text = json.dumps({"category_id": None, "confidence": 0.1, "reason": "test"})
     assert out["confidence"] == 0.2 and _Handler.received[-1]["think"] is False
+
+
+def test_embed_in_batches_and_validates(server):
+    c = OllamaClient(server, "qwen3:8b")
+    vecs = c.embed([f"t{i}" for i in range(5)], "qwen3-embedding:0.6b", batch=2)
+    assert len(vecs) == 5
+    reqs = [r for r in _Handler.received if "input" in r]
+    assert [len(r["input"]) for r in reqs] == [2, 2, 1]
+    with pytest.raises(OllamaError):
+        c.embed(["x"], "bad")
+    assert c.has_model("qwen2.5:3b") and not c.has_model("qwen3-embedding:0.6b")

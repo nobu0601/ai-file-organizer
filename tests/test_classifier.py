@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from classifier.base import DocInput
@@ -11,10 +13,25 @@ from scanner.parsers import ContentExtractor
 
 
 class FakeClient:
-    def __init__(self, response=None, error=False):
+    def __init__(self, response=None, error=False, vectors=None):
         self.response = response or {}
         self.error = error
         self.prompts = []
+        self.vectors = vectors      # ファイル名 -> 埋め込みベクトル（None なら埋め込みモデル無し）
+        self.embedded = []
+
+    def has_model(self, model):
+        if self.error:
+            raise OllamaError("connection refused")
+        return self.vectors is not None
+
+    def embed(self, texts, model):
+        self.embedded.extend(texts)
+        out = []
+        for t in texts:
+            stem = t.splitlines()[0].removeprefix("ファイル名: ")
+            out.append(self.vectors[stem])
+        return out
 
     def generate_json(self, prompt):
         self.prompts.append(prompt)
@@ -104,3 +121,51 @@ def test_heuristic_does_not_use_extension_as_category(tmp_path):
     groups = sorted(sorted(m.split("_")[-1] for m in c.members) for c in draft.new_categories)
     assert len(draft.new_categories) == 2
     assert groups == [["0.pdf.txt", "1.pdf.txt"], ["2.pdf.txt", "3.pdf.txt"]]
+
+
+def _theme_docs(tmp_path):
+    # 同じテーマでも共通の単語が無いファイル（単語ベースではまとめられない）
+    texts = {
+        "請求書_月見野": "請求番号 INV-0412 振込期限 5月31日",
+        "領収書_星の宮": "宛名 上様 名刺印刷代として",
+        "見積書_白樺": "コピー用紙 インクカートリッジ 合計",
+        "肥料メモ": "元肥 苦土石灰 追肥",
+        "害虫対策": "アブラムシ ヨトウムシ 防虫ネット",
+        "収穫記録": "ミニトマト 桃太郎 実割れ",
+    }
+    files = [write(tmp_path / f"{n}.txt", t) for n, t in texts.items()]
+    return [_doc(f, tmp_path) for f in files]
+
+
+def _vectors():
+    acc, garden = [1.0, 0.1, 0.0], [0.0, 0.1, 1.0]
+    return {"請求書_月見野": acc, "領収書_星の宮": [0.9, 0.2, 0.1], "見積書_白樺": [1.0, 0.0, 0.1],
+            "肥料メモ": garden, "害虫対策": [0.1, 0.2, 0.9], "収穫記録": [0.0, 0.0, 1.0]}
+
+
+def test_semantic_grouping_finds_themes_without_shared_words(tmp_path):
+    from taxonomy.model import Taxonomy
+    docs = _theme_docs(tmp_path)
+    lexical = HeuristicClassifier().propose_taxonomy(docs, Taxonomy())
+    assert not lexical.new_categories          # 単語ベースではカテゴリが作られない
+    fake = FakeClient({"name": "", "description": ""}, vectors=_vectors())
+    draft = OllamaClassifier(fake).propose_taxonomy(docs, Taxonomy())
+    groups = sorted(sorted(Path(m).stem for m in c.members) for c in draft.new_categories)
+    assert groups == [["収穫記録", "害虫対策", "肥料メモ"], ["見積書_白樺", "請求書_月見野", "領収書_星の宮"]]
+    assert not draft.unassigned
+    # 共通語が無くてもキーワード（分類条件）が付く
+    assert all(c.keywords for c in draft.new_categories)
+
+
+def test_semantic_grouping_falls_back_without_embedding_model(tmp_path):
+    from taxonomy.model import Taxonomy
+    docs = _theme_docs(tmp_path)
+    draft = OllamaClassifier(FakeClient({"name": "x"}, vectors=None)).propose_taxonomy(docs, Taxonomy())
+    assert not draft.new_categories and any("qwen3-embedding" in n for n in draft.notes)
+    draft = OllamaClassifier(FakeClient(error=True)).propose_taxonomy(docs, Taxonomy())
+    assert not draft.new_categories and any("単語の一致" in n for n in draft.notes)
+
+
+def test_draft_word_is_not_a_theme():
+    toks = tokenize("内定通知_下書き 遠足のしおり 下書き")
+    assert "下書" not in toks

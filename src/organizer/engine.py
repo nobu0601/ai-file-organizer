@@ -18,6 +18,7 @@ from classifier.base import ClassificationResult, Classifier, DocInput
 from classifier.heuristic import HeuristicClassifier
 from classifier.model_select import recommended
 from classifier.ollama import OllamaClassifier, OllamaClient, OllamaError
+from classifier.semantic import EMBED_MODEL
 from classifier.validation import evaluate
 from history.db import (F_FAILED, F_MOVED, F_PENDING, F_PROCESSING, F_READY, F_REVIEW, F_SKIPPED, HistoryDB,
                         path_key)
@@ -115,9 +116,12 @@ class Engine:
         return c.name, c.size_gb, ram
 
     def pull_model(self, name: str) -> str:
-        self._client().pull(name)
+        """分類用モデルと、ファイルを意味でまとめるための埋め込みモデルをダウンロードする。"""
+        client = self._client()
+        client.pull(name)
+        client.pull(EMBED_MODEL)
         self.rebuild()   # 自動選択をやり直す
-        return f"{name} をダウンロードしました"
+        return f"{name} と {EMBED_MODEL} をダウンロードしました"
 
     def save_settings(self) -> None:
         save_settings(self.settings, self.paths.settings_file)
