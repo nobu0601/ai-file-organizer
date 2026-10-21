@@ -1,0 +1,494 @@
+{
+  "themes": {
+    "alpha_motor": "架空の「Alpha」モーター制御基板の開発プロジェクト（設計書、試験結果、解析、レビュー議事録）",
+    "accounting": "個人事業の経理（複数の取引先からの請求書・領収書・見積書・経費精算）",
+    "kyoto_trip": "京都旅行の計画（行程、ホテル予約、観光地メモ、交通）",
+    "hiring": "社員採用（求人票、応募者評価シート、面接日程、内定通知の下書き）",
+    "ml_research": "機械学習の研究（論文メモ、実験ログ、学習スクリプト、ハイパーパラメータ比較）",
+    "renovation": "自宅リフォーム（業者見積、間取り変更案、工事スケジュール、業者とのやり取り）",
+    "school": "子供の小学校関連（学校だより、行事予定、PTA連絡、持ち物リスト）",
+    "garden": "家庭菜園（種まき計画、収穫記録、肥料メモ、害虫対策）"
+  },
+  "files": [
+    {
+      "name": "alpha_試験結果_0412.csv",
+      "label": "alpha_motor",
+      "split": "seed",
+      "content": "test_id,項目,条件,結果,判定\nAL-T-001,無負荷電流,24V 25℃,0.18A,合格\nAL-T-002,最大トルク,24V 60℃,1.32Nm,合格\nAL-T-003,PWM周波数応答,20kHz,遅れ 42us,要確認\nAL-T-004,過電流保護,30A,動作確認,合格"
+    },
+    {
+      "name": "Alpha基板_設計書_v2.docx",
+      "label": "alpha_motor",
+      "split": "seed",
+      "content": "Alpha基板 設計書 v2\n1. 目的: 三相ブラシレスモーターを制御する駆動基板の仕様を定める。\n2. 主要部品: ゲートドライバ、MOSFETブリッジ、電流センサ（シャント抵抗方式）。\n3. 制御周期: 電流ループ 20kHz、速度ループ 2kHz。\n4. 電源入力: DC 12V〜28V。逆接保護ダイオードを搭載する。\n5. 通信: UARTで上位コントローラとパラメータをやり取りする。"
+    },
+    {
+      "name": "alpha_レビュー議事録_0305.md",
+      "label": "alpha_motor",
+      "split": "seed",
+      "content": "# Alpha 基板 設計レビュー議事録（3/5）\n- 参加: 制御担当、回路担当、試験担当\n- 議題1: 電流センサのオフセット補正方法\n  - 起動時に0A区間を平均化する案で合意\n- 議題2: MOSFETのデッドタイム\n  - 次回までに波形を確認し、2種類の値を比較する\n- 次回: 3/12 14:00"
+    },
+    {
+      "name": "alpha_制御ループ_解析メモ.txt",
+      "label": "alpha_motor",
+      "split": "seed",
+      "content": "Alpha 制御ループ 解析メモ\nボード番号 A-03 で位相余裕を測定した。\n電流ループのクロスオーバーは約3.1kHzで、位相余裕は48度。\n速度ループはゲインを下げると振動が収まることを確認した。\n次は負荷変動時の応答を測り、積分ゲインを再調整する。"
+    },
+    {
+      "name": "alpha_driver_test.py",
+      "label": "alpha_motor",
+      "split": "seed",
+      "content": "# Alpha driver test result summary (example)\nimport csv\n\n\ndef load_results(path):\n    with open(path, encoding=\"utf-8\") as f:\n        return list(csv.DictReader(f))\n\n\ndef count_pass(rows):\n    return sum(1 for r in rows if r[\"判定\"] == \"合格\")\n\n\nif __name__ == \"__main__\":\n    rows = load_results(\"alpha_試験結果_0412.csv\")\n    print(\"pass:\", count_pass(rows), \"/\", len(rows))"
+    },
+    {
+      "name": "alpha_基板_発熱評価.xlsx",
+      "label": "alpha_motor",
+      "split": "holdout",
+      "content": "測定点,負荷(A),周囲温度(℃),MOSFET温度(℃),判定\nQ1,10,25,58,問題なし\nQ1,20,25,79,要対策\nQ4,20,25,71,問題なし\n基板裏面,20,25,66,要確認"
+    },
+    {
+      "name": "無題.md",
+      "label": "alpha_motor",
+      "split": "holdout",
+      "content": "モータ駆動の件\nインバータ側のスイッチング損失を見直す。\nヒートシンクを大きくするか、ファンを追加するかを比べる。\nホールICの配線を短くすると、ノイズが減るはず。"
+    },
+    {
+      "name": "scan_0012.txt",
+      "label": "alpha_motor",
+      "split": "holdout",
+      "content": "（手書きメモを読み取り）\nエンコーダ分解能 4096 → 1024 に変えると速度推定が安定しないかも。\nブラシレス機の回転子位置はホールIC三個で取る案。\nLd, Lq の測定をもう一度やる。"
+    },
+    {
+      "name": "alpha_ファームウェア_起動ログ.log",
+      "label": "alpha_motor",
+      "split": "holdout",
+      "content": "2026-03-02 09:14:22 INFO  firmware build 0.9.4 flashed to board A-01\n2026-03-02 09:15:03 WARN  current sensor offset 0.031A exceeds limit\n2026-03-02 09:17:40 INFO  offset calibration run complete\n2026-03-02 10:02:11 ERROR overtemperature trip at 92C (driver U)\n2026-03-02 10:02:12 INFO  motor output disabled"
+    },
+    {
+      "name": "請求書_2026_04_月見野商事.txt",
+      "label": "accounting",
+      "split": "seed",
+      "content": "請求書\n請求番号: INV-2026-0412\n請求先: 月見野商事 株式会社 御中\n発行日: 2026年4月30日\n内容: Webサイト保守 4月分 165,000円（税込）\n振込期限: 2026年5月31日\n振込先: 別紙のとおり"
+    },
+    {
+      "name": "領収書_0318_星の宮印刷.docx",
+      "label": "accounting",
+      "split": "seed",
+      "content": "領収書\n宛名: 上様\n金額: 24,200円（消費税含む）\n但し: 名刺印刷代として\n発行日: 2026年3月18日\n発行者: 星の宮印刷\n登録番号: T9999999999999"
+    },
+    {
+      "name": "経費精算_2026Q1.csv",
+      "label": "accounting",
+      "split": "seed",
+      "content": "日付,科目,取引先,金額,税区分,メモ\n2026-01-08,通信費,架空ネット回線,5980,課税10%,事務所回線\n2026-01-22,消耗品費,白樺オフィス資材,3240,課税10%,ボールペン等\n2026-02-03,交通費,東雲タクシー,1870,課税10%,打合せ移動\n2026-03-11,会議費,北浜カフェ,2600,課税10%,取引先と打合せ"
+    },
+    {
+      "name": "見積書_白樺オフィス資材_v3.xlsx",
+      "label": "accounting",
+      "split": "seed",
+      "content": "見積番号,Q-2026-0320-07,,,\n品名,数量,単価,金額,備考\nA4コピー用紙 5箱,5,2400,12000,\nインクカートリッジ 黒,4,1800,7200,\nファイルボックス,10,350,3500,\n合計(税抜),,,22700,"
+    },
+    {
+      "name": "取引先一覧_メモ.html",
+      "label": "accounting",
+      "split": "seed",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>取引先一覧</title></head>\n<body>\n<h1>取引先一覧（個人事業）</h1>\n<ul>\n<li>月見野商事: Webサイト保守。請求は月末締め翌月末払い</li>\n<li>星の宮印刷: 名刺・チラシ。都度発注</li>\n<li>白樺オフィス資材: 事務用品。見積は毎年3月に更新</li>\n</ul>\n</body>\n</html>"
+    },
+    {
+      "name": "2026年度_消費税集計.csv",
+      "label": "accounting",
+      "split": "holdout",
+      "content": "期間,課税売上(税抜),課税仕入(税抜),納付見込み(概算)\n2026年1月,412000,96000,31600\n2026年2月,389000,88500,30050\n2026年3月,455000,102300,35270"
+    },
+    {
+      "name": "export.csv",
+      "label": "accounting",
+      "split": "holdout",
+      "content": "date,payee,amount,memo\n2026/04/02,ハナミズキ不動産,88000,事務所家賃(4月)\n2026/04/05,青葉電設,12500,照明器具交換費\n2026/04/09,東雲トレーディング,4300,梱包材"
+    },
+    {
+      "name": "document (3).docx",
+      "label": "accounting",
+      "split": "holdout",
+      "content": "入金確認\n4月10日、北浜フーズ株式会社より売掛金の一部入金あり。\n請求額 330,000円 に対し 300,000円。差額 30,000円は振込手数料と思われる。\n4月末までに消込を完了させる。"
+    },
+    {
+      "name": "月次_売掛金消込メモ.md",
+      "label": "accounting",
+      "split": "holdout",
+      "content": "# 売掛金 消込メモ（4月）\n- 北浜フーズ: 未入金 1件 (INV-2026-0403)\n- 月見野商事: 入金済 (4/28)\n- 次回: 5月第1週に請求書を発行予定"
+    },
+    {
+      "name": "求人票_バックエンド_エンジニア.md",
+      "label": "hiring",
+      "split": "seed",
+      "content": "# 求人票：バックエンドエンジニア（正社員）\n- 業務内容: 予約管理APIの設計・開発（ASP.NET Core / PostgreSQL）\n- 必須: C#での開発経験3年以上、RDBの設計経験\n- 歓迎: クラウド運用、CI/CDの構築経験\n- 勤務地: 東京都内（リモート併用可）\n- 年収: 経験により決定"
+    },
+    {
+      "name": "応募者評価シート_一次選考.csv",
+      "label": "hiring",
+      "split": "seed",
+      "content": "候補者ID,技術力(5),コミュニケーション(5),志望度(5),総合,コメント\nC-101,4,4,5,4,API設計の経験が具体的\nC-102,3,5,3,3,面接での説明が丁寧\nC-103,5,3,4,4,テスト設計に強み\nC-104,2,4,4,3,経験年数が不足気味"
+    },
+    {
+      "name": "面接日程_5月週.xlsx",
+      "label": "hiring",
+      "split": "seed",
+      "content": "日付,時間,候補者ID,面接官,形式\n5/12(火),10:00,C-101,佐伯,オンライン\n5/12(火),13:30,C-103,鷹野,対面\n5/14(木),11:00,C-102,佐伯,対面"
+    },
+    {
+      "name": "内定通知_下書き_v1.docx",
+      "label": "hiring",
+      "split": "seed",
+      "content": "内定通知書（下書き）\n候補者: 御中\n貴殿を当社の正社員として採用することに内定いたしました。\n入社予定日: 2026年7月1日\n配属予定: 開発部 バックエンドチーム\n本通知の有効期限: 2026年6月10日"
+    },
+    {
+      "name": "採用候補_面接メモ.txt",
+      "label": "hiring",
+      "split": "seed",
+      "content": "採用候補 面接メモ（C-103）\n前職では予約システムの負荷試験を担当。\n質問への回答は具体的で、障害対応の振り返りも良かった。\n懸念: リモートでの共同作業の経験が少ない。\n次の判断: 最終面接の日程を調整する。"
+    },
+    {
+      "name": "採用フロー_改善案.html",
+      "label": "hiring",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>採用フロー改善案</title></head>\n<body>\n<h1>採用フロー改善案</h1>\n<p>書類選考から内定までの平均日数が32日と長いため、以下を検討する。</p>\n<ol>\n<li>書類選考の一次判定を48時間以内にする</li>\n<li>面接官の日程を月初に一括登録する</li>\n<li>内定通知の承認フローを一本化する</li>\n</ol>\n</body>\n</html>"
+    },
+    {
+      "name": "新しいテキスト ドキュメント.txt",
+      "label": "hiring",
+      "split": "holdout",
+      "content": "候補者 C-107 の件\n職歴: SIerで業務システムの保守を4年。Javaが中心。\n面接は2回目まで実施済み。評価はまだ揃っていない。\n来週の火曜に三次面談を入れたい（人事側で確認）。"
+    },
+    {
+      "name": "document (7).docx",
+      "label": "hiring",
+      "split": "holdout",
+      "content": "新卒採用 説明会 メモ\n開催日: 6月中旬の予定（会場未定）\n想定参加者: 40名程度\n配布物: 会社紹介パンフ、先輩社員のインタビュー\n担当: 採用チーム 2名"
+    },
+    {
+      "name": "応募者一覧_2026夏.csv",
+      "label": "hiring",
+      "split": "holdout",
+      "content": "応募日,候補者ID,応募職種,経歴年数,ステータス\n2026-06-01,C-120,営業企画,6,書類選考中\n2026-06-03,C-121,経理,3,面接待ち\n2026-06-04,C-122,デザイナー,4,不採用"
+    },
+    {
+      "name": "exp_lr_sweep_0412.csv",
+      "label": "ml_research",
+      "split": "seed",
+      "content": "run_id,lr,batch_size,epochs,val_acc\nlr_sweep_01,0.0001,64,30,0.812\nlr_sweep_02,0.0003,64,30,0.836\nlr_sweep_03,0.001,64,30,0.829\nlr_sweep_04,0.003,64,30,0.701"
+    },
+    {
+      "name": "train_resnet_small.py",
+      "label": "ml_research",
+      "split": "seed",
+      "content": "# small ResNet training loop for the lr sweep (example)\nimport torch\nfrom torch import nn, optim\n\n\ndef train(model, loader, lr=3e-4, epochs=30):\n    opt = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)\n    loss_fn = nn.CrossEntropyLoss()\n    for epoch in range(epochs):\n        for x, y in loader:\n            opt.zero_grad()\n            loss = loss_fn(model(x), y)\n            loss.backward()\n            opt.step()"
+    },
+    {
+      "name": "train_20260412.log",
+      "label": "ml_research",
+      "split": "seed",
+      "content": "2026-04-12 09:01:05 INFO  start run lr_sweep_02 lr=0.0003 bs=64\n2026-04-12 09:01:44 INFO  epoch 1 loss=2.311 val_acc=0.412\n2026-04-12 09:14:09 INFO  epoch 15 loss=0.602 val_acc=0.791\n2026-04-12 09:31:37 INFO  epoch 30 loss=0.388 val_acc=0.836\n2026-04-12 09:31:38 INFO  checkpoint saved ckpt_lr_sweep_02.pt"
+    },
+    {
+      "name": "論文メモ_attention_efficiency.md",
+      "label": "ml_research",
+      "split": "seed",
+      "content": "# 論文メモ: Efficient attention variants\n- 対象: 長文入力でのattention計算量を下げる手法の比較\n- 主張: 線形近似で計算量はO(n)になるが、精度低下が大きい\n- 気になる点: ベンチマークが小規模データのみ\n- 再現: 公開コードの学習率設定を先に確認する"
+    },
+    {
+      "name": "ハイパーパラメータ比較_v2.xlsx",
+      "label": "ml_research",
+      "split": "seed",
+      "content": "config,optimizer,warmup_steps,dropout,best_val_loss\ncfg_A,AdamW,500,0.1,0.412\ncfg_B,AdamW,1000,0.1,0.398\ncfg_C,SGD,500,0.2,0.455\ncfg_D,AdamW,1000,0.3,0.421"
+    },
+    {
+      "name": "実験ノート_データ拡張.docx",
+      "label": "ml_research",
+      "split": "holdout",
+      "content": "Experiment note: data augmentation\nRandom crop and horizontal flip improved val accuracy by about 2.4 points.\nColor jitter alone made training unstable at high intensity.\nNext: try mixup with alpha 0.2 on the small model.\nKeep the validation split fixed across all runs."
+    },
+    {
+      "name": "output.txt",
+      "label": "ml_research",
+      "split": "holdout",
+      "content": "eval summary\nmodel: small_cnn_v3\ntop-1 on held-out split: 0.774\nconfusion mainly between class 4 and class 7\ninference time per batch (64): 18ms on CPU"
+    },
+    {
+      "name": "export_1.csv",
+      "label": "ml_research",
+      "split": "holdout",
+      "content": "epoch,train_loss,valid_loss,lr\n1,2.18,2.06,0.00030\n5,1.04,0.97,0.00029\n10,0.71,0.73,0.00026\n20,0.45,0.61,0.00015"
+    },
+    {
+      "name": "dropout_ablation_summary.html",
+      "label": "ml_research",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Dropout ablation</title></head>\n<body>\n<h1>Dropout ablation summary</h1>\n<p>Dropout rates 0.0, 0.1, 0.3, 0.5 on the small transformer.</p>\n<table>\n<tr><th>dropout</th><th>val_acc</th></tr>\n<tr><td>0.0</td><td>0.801</td></tr>\n<tr><td>0.1</td><td>0.823</td></tr>\n<tr><td>0.3</td><td>0.817</td></tr>\n<tr><td>0.5</td><td>0.769</td></tr>\n</table>\n</body>\n</html>"
+    },
+    {
+      "name": "京都旅行_行程案_v1.md",
+      "label": "kyoto_trip",
+      "split": "seed",
+      "content": "# 京都旅行 行程案 v1\n- 1日目: 京都駅 → 清水寺 → 二年坂・三年坂散策\n- 2日目: 嵐山（竹林の小径、渡月橋）。午後は嵯峨野トロッコ列車\n- 3日目: 伏見稲荷大社 → 錦市場で食べ歩き → 帰路\n- 移動: 基本は地下鉄とバス。混雑する日は早めに出発"
+    },
+    {
+      "name": "京都_ホテル予約.txt",
+      "label": "kyoto_trip",
+      "split": "seed",
+      "content": "ホテル予約メモ\n宿: 四条近くのビジネスホテル（ツイン1室）\nチェックイン: 3月28日 15:00 以降\nチェックアウト: 3月30日 10:00\n予約番号: HT-88213\n朝食: 付き（追加料金なし）"
+    },
+    {
+      "name": "観光地メモ_嵐山_伏見.docx",
+      "label": "kyoto_trip",
+      "split": "seed",
+      "content": "嵐山の見どころ\n竹林の小径は朝早い時間が空いている。\n渡月橋からの眺めは、桜の時期が特に人気。\n伏見稲荷は千本鳥居を上まで歩くと約2時間かかる。\nお守りは一つ目の授与所で購入できる。"
+    },
+    {
+      "name": "京都_交通費見積.csv",
+      "label": "kyoto_trip",
+      "split": "seed",
+      "content": "区間,交通手段,片道運賃(円),日数,合計(円)\n京都駅-清水寺,バス,230,2,920\n四条-嵐山,阪急電車,260,2,1040\n京都駅-伏見稲荷,JR,150,1,600"
+    },
+    {
+      "name": "京都旅行_持ち物チェック.xlsx",
+      "label": "kyoto_trip",
+      "split": "seed",
+      "content": "持ち物,数量,済,メモ\nモバイルバッテリー,1,○,移動が多いので必須\n歩きやすい靴,1,○,伏見稲荷の階段用\n雨具（折りたたみ傘）,1,×,3月末の天気次第\nカイロ,2,×,朝晩は冷える"
+    },
+    {
+      "name": "京都_移動手段_比較.html",
+      "label": "kyoto_trip",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>移動手段比較</title></head>\n<body>\n<h1>京都市内の移動手段比較</h1>\n<p>レンタサイクルとバスを比べた。</p>\n<ul>\n<li>レンタサイクル: 1日1,100円。坂道の多い東山エリアは大変</li>\n<li>市バス: 1回230円。渋滞で時間が読めない</li>\n<li>地下鉄: 東西・南北線で主要駅を結ぶ。乗換は少ない</li>\n</ul>\n</body>\n</html>"
+    },
+    {
+      "name": "無題 (4).md",
+      "label": "kyoto_trip",
+      "split": "holdout",
+      "content": "ご飯どころ候補\n- 錦市場の出汁巻き卵（朝は空いている）\n- 先斗町の川床は夏限定、予約必須\n- 祇園の甘味処（抹茶パフェ）\n夜は三条で決める。"
+    },
+    {
+      "name": "scan_0031.txt",
+      "label": "kyoto_trip",
+      "split": "holdout",
+      "content": "（スキャン文字起こし）\n3月29日 午前 清水寺の拝観時間 6:00〜18:00\n午後 五条坂で陶器を見る\n帰りの新幹線は17:42発。乗車券は事前に購入済み"
+    },
+    {
+      "name": "旅行_食事候補リスト.csv",
+      "label": "kyoto_trip",
+      "split": "holdout",
+      "content": "店名,エリア,ジャンル,予算(円),メモ\nふじ野茶寮,祇園,和食,3000,予約が取りにくい\n鴨川食堂,木屋町,定食,1200,昼のみ営業\n竹屋うどん,嵐山,うどん,1000,待ち時間あり"
+    },
+    {
+      "name": "リフォーム_キッチン見積_v2.csv",
+      "label": "renovation",
+      "split": "seed",
+      "content": "項目,数量,単価(円),金額(円),備考\nシステムキッチン交換,1,480000,480000,扉材は白\n食洗機設置,1,95000,95000,配管工事込み\n床の張り替え(フローリング),12,8500,102000,\n諸経費,1,38000,38000,"
+    },
+    {
+      "name": "間取り変更案_リビング拡張.txt",
+      "label": "renovation",
+      "split": "seed",
+      "content": "間取り変更案 B\n和室の壁を撤去し、リビングを約4畳分拡張する。\n廊下の幅は現状の78cmを85cmにする。\n収納は階段下に作り付けで確保する。\n構造壁に当たるため、施工前に建築士の確認が必要。"
+    },
+    {
+      "name": "工事スケジュール_6月.xlsx",
+      "label": "renovation",
+      "split": "seed",
+      "content": "日付,工程,担当,状態\n6/02,解体,ひまわり内装工事,完了\n6/05,配管・電気の移設,青葉設備,進行中\n6/12,床の下地補修,ひまわり内装工事,予定\n6/18,クロス貼り,ひまわり内装工事,予定"
+    },
+    {
+      "name": "業者とのやり取り_メモ.md",
+      "label": "renovation",
+      "split": "seed",
+      "content": "# 業者とのやり取り\n- 5/20 ひまわり内装工事: 見積の再提出を依頼。値引きは検討中との回答\n- 5/22 青葉設備: 配管ルートの変更案を受領。追加費用は約3万円\n- 次回: 6/1 までに最終見積を両社から揃える"
+    },
+    {
+      "name": "水回り工事_打合せ議事.docx",
+      "label": "renovation",
+      "split": "seed",
+      "content": "水回り工事 打合せ議事（5月28日）\n出席: 施主、ひまわり内装工事 現場担当\n議題1: 浴室の換気扇の位置変更 → 天井の梁を避ける形で合意\n議題2: 洗面台の高さ → 施主希望の85cmで対応\n議題3: 養生の期間 → 6月の雨季を考慮して2日延長"
+    },
+    {
+      "name": "内装業者_追加工事の相談.html",
+      "label": "renovation",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>追加工事の相談</title></head>\n<body>\n<h1>追加工事の相談</h1>\n<p>工事中に見つかった床下の傷みについて、業者へ相談した内容。</p>\n<ul>\n<li>床下の土台の一部が腐食。補修範囲は約2平米</li>\n<li>補修費用は追加で約15万円の見込み</li>\n<li>防湿シートの張り替えも一緒に行うと提案あり</li>\n</ul>\n</body>\n</html>"
+    },
+    {
+      "name": "memo_0511.txt",
+      "label": "renovation",
+      "split": "holdout",
+      "content": "床材の候補\nオーク無垢は高いが、足触りが良い。\n複合フローリングは傷に強い。ペットがいる家なら複合の方が楽かも。\n色はミディアムブラウンで統一する。"
+    },
+    {
+      "name": "data (2).csv",
+      "label": "renovation",
+      "split": "holdout",
+      "content": "部屋,面積(㎡),壁紙番号,色味,張替え要否\nリビング,22,WP-310,アイボリー,要\n寝室,9,WP-245,グレー,不要\n書斎,8,WP-180,水色,要"
+    },
+    {
+      "name": "壁紙・床材_選定メモ.md",
+      "label": "renovation",
+      "split": "holdout",
+      "content": "# 壁紙・床材 選定メモ\n- 候補A: 調湿機能つき壁紙（湿気が多い北側の部屋向け）\n- 候補B: 防汚加工の床材（玄関・キッチン）\n- 決定: リビングは候補Aの淡色。玄関は候補Bの濃色\n- 注意: サンプル帳の色は照明で違って見える"
+    },
+    {
+      "name": "学校だより_2026年5月号.docx",
+      "label": "school",
+      "split": "seed",
+      "content": "つくし野小学校 学校だより 5月号\n・運動会は5月24日（土）。雨天時は翌日25日（日）に延期します。\n・身体測定は5月8日です。\n・給食試食会の申込みは5月15日までに担任へ。"
+    },
+    {
+      "name": "運動会_行事予定.csv",
+      "label": "school",
+      "split": "seed",
+      "content": "日付,時間,行事,学年,場所\n5/24,8:30,開会式,全学年,グラウンド\n5/24,9:00,徒競走,1・2年,グラウンド\n5/24,10:30,ダンス,3・4年,体育館\n5/24,13:00,リレー,5・6年,グラウンド"
+    },
+    {
+      "name": "PTA連絡_委員会.txt",
+      "label": "school",
+      "split": "seed",
+      "content": "PTA連絡（5月）\n広報委員: 5/14 16:00 に第一回会議（図書室）\n校庭開放の当番表を配布しました。当番は5月中に1回以上お願いします。\n来月の役員選出については、来週末までに候補を挙げてください。"
+    },
+    {
+      "name": "持ち物リスト_1年生.md",
+      "label": "school",
+      "split": "seed",
+      "content": "# 1年生 持ち物リスト（遠足）\n- 水筒（麦茶のみ）\n- 帽子（名前を書く）\n- レジャーシート（小さめ）\n- 着替え一式（ビニール袋に入れる）\n- ウェットティッシュ"
+    },
+    {
+      "name": "遠足_しおり_下書き.html",
+      "label": "school",
+      "split": "seed",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>遠足のしおり</title></head>\n<body>\n<h1>遠足のしおり（下書き）</h1>\n<p>行先: つくし野公園</p>\n<p>集合: 8:20 正門前。解散: 15:00 正門前</p>\n<p>持ち物: 持ち物リストを参照してください。</p>\n</body>\n</html>"
+    },
+    {
+      "name": "給食だより_献立表.xlsx",
+      "label": "school",
+      "split": "holdout",
+      "content": "日付,献立,アレルギー注意,備考\n5/11,ごはん・鮭の塩焼き・すまし汁,魚,\n5/12,パン・ミネストローネ・ヨーグルト,乳,\n5/13,カレーライス・海藻サラダ,小麦,人気メニュー"
+    },
+    {
+      "name": "scan_0077.txt",
+      "label": "school",
+      "split": "holdout",
+      "content": "（文字起こし）\n来週の金曜は前日に体操服を持ち帰ります。\n図書の返却期限は5/16。\n授業参観は6月の第二週に予定。日程は変わる可能性あり。"
+    },
+    {
+      "name": "無題2.txt",
+      "label": "school",
+      "split": "holdout",
+      "content": "ランドセルの件。登校班の集合場所が変わった。\n新しい集合: 公園前の角（八百屋の前）\n班長は当面の間、6年生の班長が担当。"
+    },
+    {
+      "name": "保護者面談_日程調整.md",
+      "label": "school",
+      "split": "holdout",
+      "content": "# 保護者面談 日程調整\n- 期間: 6/22〜6/26（各日 15分刻み）\n- 希望は第3希望まで記入し、連絡帳で担任へ\n- 面談室は1階の空き教室を使用\n- 兄弟で通う場合は続けて予約できるよう調整する"
+    },
+    {
+      "name": "家庭菜園_種まき計画_2026.xlsx",
+      "label": "garden",
+      "split": "seed",
+      "content": "作物,種まき時期,定植時期,収穫予定,メモ\nミニトマト,3月下旬,4月下旬,7月,支柱を先に立てる\nナス,4月初旬,5月上旬,7月下旬,\nピーマン,4月中旬,5月中旬,8月,\nインゲン,4月下旬,直まき,6月,"
+    },
+    {
+      "name": "収穫記録_トマト.csv",
+      "label": "garden",
+      "split": "seed",
+      "content": "収穫日,品種,個数,重さ(g),メモ\n2026-07-02,ミニトマト,14,210,初収穫\n2026-07-06,ミニトマト,22,330,\n2026-07-10,桃太郎,6,780,実割れあり"
+    },
+    {
+      "name": "肥料メモ.md",
+      "label": "garden",
+      "split": "seed",
+      "content": "# 肥料メモ\n- 元肥: 苦土石灰を植え付けの2週間前にまく\n- 追肥: 花が咲いたら化成肥料を少量。月1回まで\n- 油かすは効き目が遅いので、早めに混ぜ込む\n- 入れすぎるとツルボケするので注意"
+    },
+    {
+      "name": "害虫対策_ノート.txt",
+      "label": "garden",
+      "split": "seed",
+      "content": "害虫対策ノート\nアブラムシ: 葉の裏を見て見つけたら水で流す\nヨトウムシ: 夜に見回り。卵塊は葉ごと取る\nコナガ: 防虫ネットを4月から早めにかける\nテントウムシは益虫なので残す"
+    },
+    {
+      "name": "ベランダ菜園_配置図.docx",
+      "label": "garden",
+      "split": "seed",
+      "content": "ベランダ菜園 配置図\n南向きの手すり側: トマトとナス（日当たり優先）\n東側の鉢: バジル、ミント（ミントは単独の鉢で）\n西側: 葉物（レタス、小松菜）。夏は遮光ネットを使う\n排水口の近くに水受け皿を置く"
+    },
+    {
+      "name": "野菜の生育_観察日記.html",
+      "label": "garden",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>生育観察</title></head>\n<body>\n<h1>野菜の生育 観察日記</h1>\n<p>5月12日: ナスの苗に本葉が5枚。草丈は約18cm。</p>\n<p>5月19日: ピーマンに蕾が見える。風で倒れやすいので支柱を追加。</p>\n<p>5月26日: ミニトマトの下葉が黄色くなったので、古い葉を摘む。</p>\n</body>\n</html>"
+    },
+    {
+      "name": "新規 Microsoft Excel ワークシート.xlsx",
+      "label": "garden",
+      "split": "holdout",
+      "content": "日付,畝,水やり(L),天候,気づき\n5/01,A畝,5,晴れ,土が乾きやすい\n5/03,B畝,3,曇り,雑草を抜く\n5/05,A畝,5,雨,水やり不要"
+    },
+    {
+      "name": "untitled.html",
+      "label": "garden",
+      "split": "holdout",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>untitled</title></head>\n<body>\n<p>コンポストの切り返し: 週末に一度、底の方から混ぜる。</p>\n<p>生ゴミは水気を切ってから入れる。卵の殻は砕いて入れる。</p>\n<p>完成目安は夏の終わり。黒くてボロボロなら使える。</p>\n</body>\n</html>"
+    },
+    {
+      "name": "畑_水やり当番.md",
+      "label": "garden",
+      "split": "holdout",
+      "content": "# 水やり当番（6月）\n- 月・水・金: 朝（A畝・B畝）\n- 火・木・土: 夕方（プランター）\n- 雨の日は当番を飛ばしてOK\n- 猛暑日は朝夕の2回。根元にたっぷり"
+    },
+    {
+      "name": "猫の飼育_記録.txt",
+      "label": "none",
+      "split": "distractor",
+      "content": "猫の健康記録（ミケ）\n体重: 4.2kg（先月より0.1kg増）\nワクチン: 次回は来年3月\nフードはシニア用に切り替え中。食欲は良好。"
+    },
+    {
+      "name": "料理レシピ_カレー.md",
+      "label": "none",
+      "split": "distractor",
+      "content": "# 夏野菜カレー\n- 玉ねぎ 2個（じっくり飴色に）\n- トマト缶 1/2缶\n- 鶏もも肉 300g\n- 隠し味にヨーグルトを大さじ2"
+    },
+    {
+      "name": "読書感想_小説.docx",
+      "label": "none",
+      "split": "distractor",
+      "content": "読書感想: 小さな町の図書館\n主人公が古い本の貸出カードを眺める場面が印象に残った。\n後半の展開がやや急ぎ足に感じた。\n人物の会話がていねいで、読後感は穏やか。"
+    },
+    {
+      "name": "車の点検_予定.csv",
+      "label": "none",
+      "split": "distractor",
+      "content": "点検項目,予定日,整備工場,費用目安(円),状態\n車検,2026-11-05,みどり自動車,68000,予約済\nタイヤ交換,2026-10-28,みどり自動車,24000,未予約\nオイル交換,2026-12-01,,6000,"
+    },
+    {
+      "name": "映画メモ_秋.txt",
+      "label": "none",
+      "split": "distractor",
+      "content": "映画メモ（秋の上映会）\n・「夜明け前の海」: 撮影が美しい。音楽が少し大きすぎた\n・「森のカフェ」: 軽い笑いが多く、気楽に見られる\n来月の上映予定は10月第2週の土曜。"
+    },
+    {
+      "name": "ギター練習_コード表.xlsx",
+      "label": "none",
+      "split": "distractor",
+      "content": "コード,押さえ方,練習回数,できた度\nC,1弦-2弦 2弦-1弦,15,○\nG,6弦3フレ 5弦2フレ,10,△\nAm,2弦1フレ 3弦2フレ 4弦2フレ,8,△"
+    },
+    {
+      "name": "引っ越し_住所変更手続き.html",
+      "label": "none",
+      "split": "distractor",
+      "content": "<!DOCTYPE html>\n<html lang=\"ja\">\n<head><meta charset=\"utf-8\"><title>住所変更の手続き</title></head>\n<body>\n<h1>住所変更の手続き</h1>\n<ul>\n<li>郵便局: 転居届（窓口またはWeb）</li>\n<li>銀行・保険: 登録住所の変更</li>\n<li>運転免許証: 新住所の警察署で変更</li>\n</ul>\n</body>\n</html>"
+    },
+    {
+      "name": "ゲーム攻略_進行ログ.log",
+      "label": "none",
+      "split": "distractor",
+      "content": "2026-05-03 21:10:12 INFO  stage 4-2 cleared (boss: 水晶の番人)\n2026-05-03 21:18:40 WARN  party HP low before boss phase 2\n2026-05-03 21:25:01 INFO  item drop: 回復薬 x3\n2026-05-04 20:02:33 INFO  stage 5-1 started"
+    }
+  ]
+}
