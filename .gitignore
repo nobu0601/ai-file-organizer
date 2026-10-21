@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+# 実行時データ（通常は %LOCALAPPDATA%\AIFileOrganizer に保存される）
+.aifo-data/
