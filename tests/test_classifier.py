@@ -169,3 +169,18 @@ def test_semantic_grouping_falls_back_without_embedding_model(tmp_path):
 def test_draft_word_is_not_a_theme():
     toks = tokenize("内定通知_下書き 遠足のしおり 下書き")
     assert "下書" not in toks
+
+
+def test_llm_placeholder_names_are_rejected(tmp_path):
+    from classifier.ollama import _clean_name
+    from taxonomy.model import Taxonomy
+    assert _clean_name("...") == "" and _clean_name("…") == "" and _clean_name("<カテゴリ名>") == ""
+    assert _clean_name("カテゴリ名") == "" and _clean_name(None) == ""
+    assert _clean_name(" 京都旅行の計画 ") == "京都旅行の計画" and _clean_name("ML 実験") == "ML 実験"
+    docs = _theme_docs(tmp_path)
+    fake = FakeClient({"name": "...", "description": "..."}, vectors=_vectors())
+    draft = OllamaClassifier(fake).propose_taxonomy(docs, Taxonomy())
+    # 書式の写しが返ってきても、内容ベースで付けた名前と説明を使う
+    assert draft.new_categories
+    assert all(c.name != "..." and c.description != "..." for c in draft.new_categories)
+    assert all('"..."' not in p for p in fake.prompts)

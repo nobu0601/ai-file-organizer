@@ -175,8 +175,9 @@ class OllamaClassifier(Classifier):
             "次のカテゴリ一覧から、文書に最も適したものを 1 つ選んでください。適切なものが無ければ null とし、"
             "新しいカテゴリ案を出してください。\n"
             f"カテゴリ一覧:\n{cat_lines}\n\n{_doc_block(doc, 1500)}\n\n"
-            '出力形式: {"category_id": "cat-... または null", "confidence": 0.0〜1.0, "reason": "日本語の理由", '
-            '"new_category": {"name": "...", "description": "...", "keywords": ["..."]} または null}'
+            '出力形式（JSON）: {"category_id": カテゴリ一覧の id または null, "confidence": 0.0〜1.0 の数値, '
+            '"reason": 日本語の理由, "new_category": null または {"name": 新しいカテゴリ名, "description": 説明, '
+            '"keywords": 特徴語のリスト}}'
         )
         try:
             out = self.client.generate_json(prompt)
@@ -248,7 +249,7 @@ class OllamaClassifier(Classifier):
                 "次のファイル群は同じテーマでまとめられました。フォルダ名として使う短いカテゴリ名（日本語可、20文字以内）と、"
                 "目的・格納対象の説明（100文字以内）を考えてください。\n"
                 f"特徴語: {', '.join(cat.keywords)}\n{blocks}\n"
-                '出力形式: {"name": "...", "description": "..."}'
+                '出力形式（JSON）: {"name": カテゴリ名, "description": 説明}'
             )
             try:
                 out = self.client.generate_json(prompt)
@@ -256,8 +257,10 @@ class OllamaClassifier(Classifier):
                 self.last_error = str(e)
                 draft.notes.append("ローカル LLM が利用できないため、内容ベースで命名しました")
                 return draft
-            name = str(out.get("name", "")).strip()[:40]
+            name = _clean_name(out.get("name"))
             desc = str(out.get("description", "")).strip()[:300]
+            if not _NAME_CHAR.search(desc):
+                desc = ""
             if name and name.lower() not in {c.name.lower() for c in draft.new_categories if c is not cat}:
                 cat.name = name
             if desc:
@@ -266,10 +269,24 @@ class OllamaClassifier(Classifier):
         return draft
 
 
+_NAME_CHAR = re.compile(r"[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff]")
+_PLACEHOLDER = re.compile(r"^[<＜「\[(（].*[>＞」\])）]$|^(カテゴリ名|新しいカテゴリ名|名前|name|category)$", re.IGNORECASE)
+
+
+def _clean_name(raw) -> str:
+    """LLM が返したカテゴリ名を検証する。使えない名前（「...」や書式の写し）は空文字にする。"""
+    if not isinstance(raw, str):
+        return ""
+    name = raw.strip()[:40]
+    if not _NAME_CHAR.search(name) or _PLACEHOLDER.match(name):
+        return ""
+    return name
+
+
 def _suggestion(raw, doc: DocInput) -> CategorySuggestion | None:
     if not isinstance(raw, dict):
         return None
-    name = str(raw.get("name", "")).strip()[:40]
+    name = _clean_name(raw.get("name"))
     kws = [str(k).strip().lower() for k in (raw.get("keywords") or []) if str(k).strip()][:8]
     if not name or not kws:
         return None
