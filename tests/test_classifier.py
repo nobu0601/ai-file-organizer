@@ -197,3 +197,14 @@ def test_llm_output_shape_is_fixed_by_schema(make_engine, sample_files, dirs):
     OllamaClassifier(fake).classify(_doc(f, dirs["watch"]), e.store.taxonomy)
     ids = fake.schemas[0]["properties"]["category_id"]["anyOf"][0]["enum"]
     assert sorted(ids) == sorted(c.category_id for c in e.store.taxonomy.active())
+
+
+def test_llm_writes_reason_before_choosing(make_engine, sample_files, dirs):
+    e = make_engine()
+    e.propose_taxonomy()
+    approve_all(e)
+    f = write(dirs["watch"] / "alpha_試験結果_7.csv", "Alpha モーター 試験 結果 温度 基板")
+    fake = FakeClient({"category_id": None, "confidence": 0.1, "reason": "x"})
+    OllamaClassifier(fake).classify(_doc(f, dirs["watch"]), e.store.taxonomy)
+    assert list(fake.schemas[0]["properties"])[:2] == ["reason", "category_id"]
+    assert fake.schemas[0]["required"][0] == "reason"

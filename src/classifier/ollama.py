@@ -185,9 +185,10 @@ class OllamaClassifier(Classifier):
             "次のカテゴリ一覧から、文書に最も適したものを 1 つ選んでください。適切なものが無ければ null とし、"
             "新しいカテゴリ案を出してください。\n"
             f"カテゴリ一覧:\n{cat_lines}\n\n{_doc_block(doc, 1500)}\n\n"
-            '出力形式（JSON）: {"category_id": カテゴリ一覧の id または null, "confidence": 0.0〜1.0 の数値, '
-            '"reason": 日本語の理由, "new_category": null または {"name": 新しいカテゴリ名, "description": 説明, '
-            '"keywords": 特徴語のリスト}}'
+            # 小型モデルは先に理由を書かせてから選ばせた方が正しく選べる（qwen3:4b で 32 件中 4 件→21 件）
+            '出力形式（JSON）: {"reason": 文書の内容とどのカテゴリに当てはまるかの検討（日本語）, '
+            '"category_id": 最も適したカテゴリの id（どれにも当てはまらなければ null）, "confidence": 0.0〜1.0 の数値, '
+            '"new_category": null または {"name": 新しいカテゴリ名, "description": 説明, "keywords": 特徴語のリスト}}'
         )
         try:
             out = self.client.generate_json(prompt, _classify_schema([c.category_id for c in cats]))
@@ -283,17 +284,18 @@ def _classify_schema(category_ids: list[str]) -> dict:
     # category_id は一覧にある ID か null しか選べないようにする（小型モデルは ID を書き崩すことがある）
     return {
         "type": "object",
+        # 生成はこの順に行われる。理由を先に書かせる
         "properties": {
+            "reason": {"type": "string"},
             "category_id": {"anyOf": [{"type": "string", "enum": category_ids}, {"type": "null"}]},
             "confidence": {"type": "number"},
-            "reason": {"type": "string"},
             "new_category": {"anyOf": [{"type": "null"}, {
                 "type": "object",
                 "properties": {"name": {"type": "string"}, "description": {"type": "string"},
                                "keywords": {"type": "array", "items": {"type": "string"}}},
                 "required": ["name", "description", "keywords"]}]},
         },
-        "required": ["category_id", "confidence", "reason", "new_category"],
+        "required": ["reason", "category_id", "confidence", "new_category"],
     }
 
 
