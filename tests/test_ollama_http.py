@@ -33,6 +33,12 @@ class _Handler(BaseHTTPRequestHandler):
         _Handler.received.append(body)
         if self.path == "/api/pull":
             self._send({"status": "success"})
+        elif body.get("prompt") == "repeat" and body["options"]["seed"] == 42:
+            msg = json.dumps({"error": "prediction aborted, token repeat limit reached"}).encode()
+            self.send_response(500)
+            self.send_header("Content-Length", str(len(msg)))
+            self.end_headers()
+            self.wfile.write(msg)
         elif self.path == "/api/embed":
             n = len(body["input"])
             self._send({"embeddings": [[float(i), 1.0] for i in range(n)] if body["model"] != "bad" else []})
@@ -109,3 +115,16 @@ def test_embed_in_batches_and_validates(server):
     with pytest.raises(OllamaError):
         c.embed(["x"], "bad")
     assert c.has_model("qwen2.5:3b") and not c.has_model("qwen3-embedding:0.6b")
+
+
+def test_schema_token_limit_and_retry_on_repeat(server):
+    c = OllamaClient(server, "qwen3:4b")
+    schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+    c.generate_json("p", schema)
+    req = _Handler.received[-1]
+    assert req["format"] == schema and req["options"]["num_predict"] > 0
+    # 繰り返しで打ち切られたら、乱数を変えて 1 回だけやり直す
+    out = c.generate_json("repeat")
+    assert out["reason"] == "test"
+    seeds = [r["options"]["seed"] for r in _Handler.received if r.get("prompt") == "repeat"]
+    assert seeds == [42, 7]

@@ -33,6 +33,8 @@ SYSTEM_PROMPT = (
 )
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# 1 回の応答の上限。分類結果の JSON は通常 300 トークン程度で収まる
+MAX_OUTPUT_TOKENS = 768
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
@@ -127,16 +129,24 @@ class OllamaClient:
             out.extend([float(x) for x in v] for v in vecs)
         return out
 
-    def generate_json(self, prompt: str) -> dict:
+    def generate_json(self, prompt: str, schema: dict | None = None) -> dict:
+        """schema（JSON Schema）を渡すと出力の形をそれに固定する。小型モデルの出力崩れを防ぐ。"""
         model = self.resolve()
         payload = {
-            "model": model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": "json",
-            "stream": False, "options": {"temperature": 0.1, "seed": 42},
+            "model": model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": schema or "json",
+            "stream": False, "options": {"temperature": 0.1, "seed": 42, "num_predict": MAX_OUTPUT_TOKENS},
         }
         if model.startswith("qwen3"):
             # 思考モードは分類には不要で、CPU では大幅に遅くなるため無効にする
             payload["think"] = False
-        resp = self._request("/api/generate", payload)
+        try:
+            resp = self._request("/api/generate", payload)
+        except OllamaError as e:
+            if "repeat" not in str(e):
+                raise
+            # 同じ語（空白など）を繰り返して打ち切られた場合は、乱数を変えて 1 回だけやり直す
+            payload["options"] = {**payload["options"], "temperature": 0.5, "seed": 7}
+            resp = self._request("/api/generate", payload)
         text = _THINK.sub("", resp.get("response", "")).strip()
         try:
             out = json.loads(text)
@@ -180,7 +190,7 @@ class OllamaClassifier(Classifier):
             '"keywords": 特徴語のリスト}}'
         )
         try:
-            out = self.client.generate_json(prompt)
+            out = self.client.generate_json(prompt, _classify_schema([c.category_id for c in cats]))
         except OllamaError as e:
             self.last_error = str(e)
             log.warning("Ollama 分類に失敗したため内容ベース分類を使います: %s", e)
@@ -252,7 +262,7 @@ class OllamaClassifier(Classifier):
                 '出力形式（JSON）: {"name": カテゴリ名, "description": 説明}'
             )
             try:
-                out = self.client.generate_json(prompt)
+                out = self.client.generate_json(prompt, _NAME_SCHEMA)
             except OllamaError as e:
                 self.last_error = str(e)
                 draft.notes.append("ローカル LLM が利用できないため、内容ベースで命名しました")
@@ -268,6 +278,30 @@ class OllamaClassifier(Classifier):
         draft.source = "ollama"
         return draft
 
+
+def _classify_schema(category_ids: list[str]) -> dict:
+    # category_id は一覧にある ID か null しか選べないようにする（小型モデルは ID を書き崩すことがある）
+    return {
+        "type": "object",
+        "properties": {
+            "category_id": {"anyOf": [{"type": "string", "enum": category_ids}, {"type": "null"}]},
+            "confidence": {"type": "number"},
+            "reason": {"type": "string"},
+            "new_category": {"anyOf": [{"type": "null"}, {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "description": {"type": "string"},
+                               "keywords": {"type": "array", "items": {"type": "string"}}},
+                "required": ["name", "description", "keywords"]}]},
+        },
+        "required": ["category_id", "confidence", "reason", "new_category"],
+    }
+
+
+_NAME_SCHEMA = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "description": {"type": "string"}},
+    "required": ["name", "description"],
+}
 
 _NAME_CHAR = re.compile(r"[0-9A-Za-z\u3040-\u30ff\u3400-\u9fff]")
 _PLACEHOLDER = re.compile(r"^[<＜「\[(（].*[>＞」\])）]$|^(カテゴリ名|新しいカテゴリ名|名前|name|category)$", re.IGNORECASE)

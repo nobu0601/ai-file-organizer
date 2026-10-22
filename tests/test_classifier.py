@@ -17,6 +17,7 @@ class FakeClient:
         self.response = response or {}
         self.error = error
         self.prompts = []
+        self.schemas = []
         self.vectors = vectors      # ファイル名 -> 埋め込みベクトル（None なら埋め込みモデル無し）
         self.embedded = []
 
@@ -33,8 +34,9 @@ class FakeClient:
             out.append(self.vectors[stem])
         return out
 
-    def generate_json(self, prompt):
+    def generate_json(self, prompt, schema=None):
         self.prompts.append(prompt)
+        self.schemas.append(schema)
         if self.error:
             raise OllamaError("connection refused")
         return self.response
@@ -184,3 +186,14 @@ def test_llm_placeholder_names_are_rejected(tmp_path):
     assert draft.new_categories
     assert all(c.name != "..." and c.description != "..." for c in draft.new_categories)
     assert all('"..."' not in p for p in fake.prompts)
+
+
+def test_llm_output_shape_is_fixed_by_schema(make_engine, sample_files, dirs):
+    e = make_engine()
+    e.propose_taxonomy()
+    approve_all(e)
+    f = write(dirs["watch"] / "alpha_試験結果_6.csv", "Alpha モーター 試験 結果 温度 基板")
+    fake = FakeClient({"category_id": None, "confidence": 0.1, "reason": "x"})
+    OllamaClassifier(fake).classify(_doc(f, dirs["watch"]), e.store.taxonomy)
+    ids = fake.schemas[0]["properties"]["category_id"]["anyOf"][0]["enum"]
+    assert sorted(ids) == sorted(c.category_id for c in e.store.taxonomy.active())
