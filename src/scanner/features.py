@@ -102,6 +102,8 @@ class DocFeatures:
     name_tokens: list[str]
     text_tokens: list[str]
     weights: dict[str, float] = field(default_factory=dict)
+    # 元の語として現れた語（漢字・カタカナの 2 文字の切れ端を含まない）。表示用の語はここから選ぶ
+    whole_terms: set[str] = field(default_factory=set)
 
     def top_terms(self, n: int = 10) -> list[str]:
         return [t for t, _ in sorted(self.weights.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
@@ -137,6 +139,7 @@ def build_features(path: Path, text: str, watch_root: Path | None = None,
     return DocFeatures(
         path=str(path), name=path.name, ext=path.suffix.lower(), folder_tokens=folders,
         name_tokens=ntoks, text_tokens=ttoks, weights=dict(weights),
+        whole_terms=set(n_whole) | set(t_whole) | set(folders),
     )
 
 

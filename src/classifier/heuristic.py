@@ -263,13 +263,15 @@ def rank_terms(members: list[DocInput], universe: list[DocInput]) -> list[str]:
         name_bonus = 1.3 if any(t in m.features.name_tokens for m in members) else 1.0
         scored.append((share * rarity * name_bonus * (w_in[t] / n), t))
     scored.sort(key=lambda x: (-x[0], x[1]))
-    terms = [t for _, t in scored]
+    whole = set().union(*(m.features.whole_terms for m in members))
+    # 表示・命名に使う語は、元の語として現れたものに限る（「装工」のような切れ端を出さない）
+    terms = [t for _, t in scored if t in whole]
     return _dedupe_substrings(terms)
 
 
 def _rank_terms_single(doc: DocInput) -> list[str]:
     w = doc.features.weights
-    terms = [t for t, _ in sorted(w.items(), key=lambda kv: (-kv[1], kv[0]))]
+    terms = [t for t, _ in sorted(w.items(), key=lambda kv: (-kv[1], kv[0])) if t in doc.features.whole_terms]
     return _dedupe_substrings(terms)
 
 

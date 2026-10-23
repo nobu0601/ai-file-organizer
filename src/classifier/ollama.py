@@ -181,8 +181,10 @@ class OllamaClassifier(Classifier):
         prompt = (
             "文書を、次のカテゴリ一覧のうち最も適したものに分類してください。\n"
             f"カテゴリ一覧:\n{cat_lines}\n\n{_doc_block(doc, 1500)}\n\n"
+            "特徴語は目安です。語が完全に一致しなくても、文書のテーマ・目的が最も近いカテゴリを選んでください。"
+            "0（該当なし）は、どのカテゴリとも明らかに無関係な場合だけにしてください。\n"
             "JSON で次の項目を答えてください。\n"
-            f"- number: 選んだカテゴリの番号（1〜{len(cats)} の整数）。どれにも当てはまらなければ 0\n"
+            f"- number: 選んだカテゴリの番号（1〜{len(cats)} の整数）。明らかにどれとも無関係なら 0\n"
             "- confidence: その判断の確からしさ（0〜1 の数）\n"
             "- reason: 判断の理由（日本語で 40 字以内）\n"
             "- new_category: number が 0 のときだけ、新しいカテゴリ案（name, description, keywords）。それ以外は null"
