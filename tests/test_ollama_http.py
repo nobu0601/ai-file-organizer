@@ -9,6 +9,7 @@ from classifier.ollama import OllamaClient, OllamaError
 
 
 class _Handler(BaseHTTPRequestHandler):
+    fail_next = 0
     response_text = json.dumps({"category_id": None, "confidence": 0.1, "reason": "test"})
     received: list = []
 
@@ -31,6 +32,12 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers["Content-Length"])
         body = json.loads(self.rfile.read(length))
         _Handler.received.append(body)
+        if self.path == "/api/generate" and _Handler.fail_next > 0:
+            _Handler.fail_next -= 1
+            self.send_response(500)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.path == "/api/pull":
             self._send({"status": "success"})
         else:
@@ -95,3 +102,12 @@ def test_pull_and_qwen3_think_disabled(server):
     finally:
         _Handler.response_text = json.dumps({"category_id": None, "confidence": 0.1, "reason": "test"})
     assert out["confidence"] == 0.2 and _Handler.received[-1]["think"] is False
+
+
+def test_generate_retries_once_on_server_error(server):
+    _Handler.fail_next = 1
+    try:
+        out = OllamaClient(server, "qwen2.5:3b").generate_json("p")
+    finally:
+        _Handler.fail_next = 0
+    assert out["reason"] == "test"

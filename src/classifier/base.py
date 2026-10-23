@@ -40,6 +40,8 @@ class ClassificationResult:
     new_category: CategorySuggestion | None = None
     source: str = "heuristic"
     scores: dict[str, float] = field(default_factory=dict)
+    # LLM の判断が内容ベース分類の 1 位と一致したか（内容ベースのみの場合は常に True）
+    cross_checked: bool = True
 
     @property
     def reason_text(self) -> str:

@@ -59,6 +59,8 @@ def evaluate(result: ClassificationResult, taxonomy: Taxonomy, parse: ParseResul
         reasons.append(f"信頼度 {result.confidence:.2f} が閾値 {threshold:.2f} 未満です")
     if result.category_id is not None and len(result.matched_keywords) < MIN_MATCHED_KEYWORDS:
         reasons.append("カテゴリの分類条件との一致が不十分です")
+    if result.category_id is not None and not result.cross_checked:
+        reasons.append("AI の判断と内容ベース分類の候補が一致しません")
     if result.source != "heuristic" and looks_like_instruction(parse.text):
         reasons.append("本文に命令文のような記述があり、AI 判断が影響された可能性があります")
     return Decision(auto_ok=not reasons, reasons=reasons)

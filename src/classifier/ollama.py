@@ -142,7 +142,12 @@ class OllamaClient:
         if model.startswith("qwen3"):
             # 思考モードは分類には不要で、CPU では大幅に遅くなるため無効にする
             payload["think"] = False
-        resp = self._request("/api/generate", payload)
+        try:
+            resp = self._request("/api/generate", payload)
+        except OllamaError as first:
+            # モデルの読み込み待ち（CPU では数分かかる）などの一時的な失敗に備えて 1 回だけやり直す
+            log.info("Ollama の呼び出しをやり直します: %s", first)
+            resp = self._request("/api/generate", payload)
         text = _THINK.sub("", resp.get("response", "")).strip()
         try:
             out = json.loads(text)
@@ -221,10 +226,15 @@ class OllamaClassifier(Classifier):
         heur = HeuristicClassifier._confidence(sim, len(matched))
         # 自己申告値を鵜呑みにせず、分類条件との一致度と平均をとる
         conf = round(0.5 * llm_conf + 0.5 * heur, 3)
+        # 独立した 2 つの方法（LLM と内容ベース）の 1 位が一致したときだけ自動移動の対象にする
+        agreed = base.category_id == cat.category_id
+        reasons = [f"LLM: {reason}", f"LLM 自己申告 {llm_conf:.2f} / 条件一致度 {heur:.2f}",
+                   f"一致キーワード: {', '.join(matched[:6]) or 'なし'}"]
+        if not agreed:
+            reasons.append("内容ベース分類の候補と一致しません")
         return ClassificationResult(
             category_id=cat.category_id, confidence=conf, source="ollama", matched_keywords=matched,
-            reasons=[f"LLM: {reason}", f"LLM 自己申告 {llm_conf:.2f} / 条件一致度 {heur:.2f}",
-                     f"一致キーワード: {', '.join(matched[:6]) or 'なし'}"],
+            reasons=reasons, cross_checked=agreed,
         )
 
     def propose_taxonomy(self, docs: list[DocInput], taxonomy: Taxonomy) -> TaxonomyDraft:
@@ -233,6 +243,7 @@ class OllamaClassifier(Classifier):
             return draft
         # 構造（クラスタ）は内容ベースで決め、名前と説明だけ LLM に考えてもらう
         by_path = {str(d.path): d for d in docs}
+        failures = 0
         for cat in draft.new_categories:
             members = [by_path[m] for m in cat.members if m in by_path][:8]
             if not members:
@@ -246,10 +257,14 @@ class OllamaClassifier(Classifier):
             )
             try:
                 out = self.client.generate_json(prompt, NAME_SCHEMA, max_tokens=160)
+                failures = 0
             except OllamaError as e:
                 self.last_error = str(e)
-                draft.notes.append("ローカル LLM が利用できないため、内容ベースで命名しました")
-                return draft
+                failures += 1
+                if failures >= 2:
+                    draft.notes.append("ローカル LLM が応答しないため、残りは内容ベースで命名しました")
+                    return draft
+                continue
             name = clean_llm_text(out.get("name"), 40)
             desc = clean_llm_text(out.get("description"), 300)
             if name and name.lower() not in {c.name.lower() for c in draft.new_categories if c is not cat}:

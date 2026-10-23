@@ -127,3 +127,37 @@ def test_llm_taxonomy_naming_falls_back_on_placeholder(make_engine, sample_files
     e.propose_taxonomy()
     titles = [p.title for p in e.db.list_proposals("pending")]
     assert titles and not any("..." in t for t in titles)
+
+
+def test_llm_disagreeing_with_content_is_not_auto_moved(make_engine, sample_files, dirs):
+    e = make_engine(preview_mode=False, auto_move=True)
+    e.propose_taxonomy()
+    approve_all(e)
+    alpha = category_by_keyword(e, "alpha")
+    other = next(c for c in e.store.taxonomy.active() if c.category_id != alpha.category_id)
+    f = write(dirs["watch"] / "alpha_試験結果_6.csv", "Alpha モーター 試験 結果 温度 基板")
+    # LLM が内容ベースの 1 位（alpha）と違うカテゴリを自信満々に選んでも、自動では動かさない
+    e._classifier_override = OllamaClassifier(FakeClient({"number": _num(e, other), "confidence": 1.0, "reason": "x"}))
+    out = e.process_file(f, "event")
+    assert out.status == F_REVIEW and "一致しません" in out.message and f.exists()
+
+
+class FlakyClient(FakeClient):
+    def __init__(self, response, fail_times):
+        super().__init__(response)
+        self.fail_times = fail_times
+
+    def generate_json(self, prompt, schema=None, max_tokens=256):
+        self.prompts.append(prompt)
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            raise OllamaError("timeout")
+        return self.response
+
+
+def test_naming_continues_after_single_failure(make_engine, sample_files):
+    e = make_engine()
+    e._classifier_override = OllamaClassifier(FlakyClient({"name": "テーマ名", "description": "説明"}, 1))
+    e.propose_taxonomy()
+    titles = [p.title for p in e.db.list_proposals("pending")]
+    assert sum("テーマ名" in t for t in titles) >= 1     # 1 件目の失敗のあとも LLM で命名を続ける
