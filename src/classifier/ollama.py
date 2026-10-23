@@ -37,7 +37,7 @@ _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 CLASSIFY_SCHEMA = {
     "type": "object",
     "properties": {
-        "category_id": {"type": ["string", "null"]},
+        "number": {"type": "integer"},
         "confidence": {"type": "number"},
         "reason": {"type": "string"},
         "new_category": {
@@ -46,7 +46,7 @@ CLASSIFY_SCHEMA = {
                            "keywords": {"type": "array", "items": {"type": "string"}}},
         },
     },
-    "required": ["category_id", "confidence", "reason"],
+    "required": ["number", "confidence", "reason"],
 }
 NAME_SCHEMA = {
     "type": "object",
@@ -174,16 +174,18 @@ class OllamaClassifier(Classifier):
         cats = taxonomy.active()
         if not cats:
             return base
+        # カテゴリは短い番号で選ばせる（長い ID は LLM が書き写し損ねやすいため）
         cat_lines = "\n".join(
-            json.dumps({"id": c.category_id, "path": c.relative_path, "description": c.description[:200],
-                        "keywords": c.keywords[:10]}, ensure_ascii=False) for c in cats)
+            f"{i}. {c.relative_path} — {c.description[:120]}（特徴語: {', '.join(c.keywords[:8])}）"
+            for i, c in enumerate(cats, 1))
         prompt = (
-            "次のカテゴリ一覧から、文書に最も適したものを 1 つ選んでください。適切なものが無ければ null とし、"
-            "新しいカテゴリ案を出してください。\n"
+            "文書を、次のカテゴリ一覧のうち最も適したものに分類してください。\n"
             f"カテゴリ一覧:\n{cat_lines}\n\n{_doc_block(doc, 1500)}\n\n"
-            '出力形式: {"category_id": "cat-... または null", "confidence": 0.0〜1.0, "reason": "日本語の理由（40字以内）", '
-            '"new_category": {"name": "...", "description": "...", "keywords": ["..."]} または null}\n'
-            "new_category は category_id が null のときだけ書いてください。"
+            "JSON で次の項目を答えてください。\n"
+            f"- number: 選んだカテゴリの番号（1〜{len(cats)} の整数）。どれにも当てはまらなければ 0\n"
+            "- confidence: その判断の確からしさ（0〜1 の数）\n"
+            "- reason: 判断の理由（日本語で 40 字以内）\n"
+            "- new_category: number が 0 のときだけ、新しいカテゴリ案（name, description, keywords）。それ以外は null"
         )
         try:
             out = self.client.generate_json(prompt, CLASSIFY_SCHEMA)
@@ -192,14 +194,17 @@ class OllamaClassifier(Classifier):
             log.warning("Ollama 分類に失敗したため内容ベース分類を使います: %s", e)
             base.reasons.append("（ローカル LLM が利用できないため内容ベース分類）")
             return base
-        return self._merge(out, base, taxonomy, doc)
+        return self._merge(out, base, cats, doc)
 
-    def _merge(self, out: dict, base: ClassificationResult, taxonomy: Taxonomy, doc: DocInput
+    def _merge(self, out: dict, base: ClassificationResult, cats: list, doc: DocInput
                ) -> ClassificationResult:
-        cid = out.get("category_id")
-        cat = taxonomy.get(cid) if isinstance(cid, str) else None
-        if cat is None or not cat.active:
-            cid, cat = None, None
+        cat = None
+        try:
+            n = int(out.get("number", 0))
+        except (TypeError, ValueError):
+            n = 0
+        if 1 <= n <= len(cats):     # 範囲外の番号は「該当なし」として扱う
+            cat = cats[n - 1]
         try:
             llm_conf = max(0.0, min(1.0, float(out.get("confidence", 0))))
         except (TypeError, ValueError):
@@ -232,10 +237,10 @@ class OllamaClassifier(Classifier):
                 continue
             blocks = "\n".join(_doc_block(m, 300) for m in members)
             prompt = (
-                "次のファイル群は同じテーマでまとめられました。フォルダ名として使う短いカテゴリ名（日本語可、20文字以内）と、"
-                "目的・格納対象の説明（100文字以内）を考えてください。\n"
-                f"特徴語: {', '.join(cat.keywords)}\n{blocks}\n"
-                '出力形式: {"name": "...", "description": "..."}'
+                "次のファイル群は同じテーマでまとめられました。JSON で次の項目を答えてください。\n"
+                "- name: フォルダ名として使う短いカテゴリ名（日本語可、20 文字以内）。テーマが一目でわかる具体的な名前\n"
+                "- description: このカテゴリの目的と、格納するファイルの説明（100 文字以内）\n"
+                f"特徴語: {', '.join(cat.keywords)}\n{blocks}"
             )
             try:
                 out = self.client.generate_json(prompt, NAME_SCHEMA, max_tokens=160)
@@ -243,8 +248,8 @@ class OllamaClassifier(Classifier):
                 self.last_error = str(e)
                 draft.notes.append("ローカル LLM が利用できないため、内容ベースで命名しました")
                 return draft
-            name = str(out.get("name", "")).strip()[:40]
-            desc = str(out.get("description", "")).strip()[:300]
+            name = clean_llm_text(out.get("name"), 40)
+            desc = clean_llm_text(out.get("description"), 300)
             if name and name.lower() not in {c.name.lower() for c in draft.new_categories if c is not cat}:
                 cat.name = name
             if desc:
@@ -253,11 +258,22 @@ class OllamaClassifier(Classifier):
         return draft
 
 
+_PLACEHOLDER = re.compile(r"^[\s.…・\-_*?？「」\"'()（）]*$")
+
+
+def clean_llm_text(value, limit: int) -> str:
+    """LLM が返した文字列を検証する。空・記号だけ・見本の書き写しは採用しない。"""
+    text = str(value or "").strip()
+    if not text or _PLACEHOLDER.match(text) or "..." in text or text in ("null", "None", "name", "description"):
+        return ""
+    return text[:limit]
+
+
 def _suggestion(raw, doc: DocInput) -> CategorySuggestion | None:
     if not isinstance(raw, dict):
         return None
-    name = str(raw.get("name", "")).strip()[:40]
-    kws = [str(k).strip().lower() for k in (raw.get("keywords") or []) if str(k).strip()][:8]
+    name = clean_llm_text(raw.get("name"), 40)
+    kws = [k for k in (clean_llm_text(x, 30).lower() for x in (raw.get("keywords") or [])) if k][:8]
     if not name or not kws:
         return None
     return CategorySuggestion(name=name, description=str(raw.get("description", ""))[:300], keywords=kws,
