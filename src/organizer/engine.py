@@ -321,7 +321,9 @@ class Engine:
         decision = evaluate(result, tax, doc.parse, self.settings.confidence_threshold, sensitive,
                             str(project_root) if project_root else None)
         proposal_id = None
-        if result.new_category is not None and result.category_id is None and doc.parse.readable \
+        # 既存カテゴリへの一致が弱い場合（候補だけの場合を含む）は新規カテゴリも提案する
+        weak = result.category_id is None or result.confidence < 0.45
+        if result.new_category is not None and weak and doc.parse.readable \
                 and not sensitive and not project_root:
             proposal_id = self._propose_new_category(result, str(p))
         cat = tax.get(result.category_id)
@@ -329,7 +331,8 @@ class Engine:
             "reasons": result.reasons, "decision": decision.reasons, "matched": result.matched_keywords,
             "source": result.source, "parse_status": doc.parse.status, "proposal_id": proposal_id,
             "suggested_name": cat.category_name if cat else None,
-            "new_category": result.new_category.name if result.new_category else None,
+            # 提案を作った場合だけ案の名前を表示する（機密の可能性があるファイルの語は画面に出さない）
+            "new_category": result.new_category.name if result.new_category and proposal_id else None,
         }
         reason = result.reason_text
         if not decision.auto_ok:

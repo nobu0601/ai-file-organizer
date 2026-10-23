@@ -33,6 +33,10 @@ STOPWORDS = {
     "ファイル", "データ", "ドキュメント", "コピー", "以下", "以上", "場合", "ため", "こと",
     "もの", "よう", "これ", "それ", "あれ", "本日", "今回", "前回", "について", "および",
     "資料", "一覧", "対象", "内容", "実施", "確認", "記載", "作成", "使用", "必要",
+    # ファイル名に付きやすい汎用語（テーマを表さない）
+    "メモ", "ノート", "まとめ", "下書", "下書き", "無題", "新規", "テキスト", "ワークシート", "エクスポート",
+    "スキャン", "バージョン", "最新", "修正", "版", "scan", "export", "output", "untitled", "memo", "note",
+    "notes", "summary", "report", "list", "sample", "test1", "image", "photo", "microsoft", "excel", "word",
 }
 
 # ファイル名から読み取る語は本文より重い（プロジェクト名などが出やすい）
@@ -63,8 +67,9 @@ def tokenize_split(text: str) -> tuple[list[str], list[str]]:
         elif "一" <= w[0] <= "龠" or w[0] == "々":
             if w not in STOPWORDS:
                 out.append(w)
-            if len(w) >= 4:
-                for n in (2, 3):
+            # 複合語の一部が一致すれば関連する（例: 「領収書」と「領収」、「工事日程」と「工事」）
+            if len(w) >= 3:
+                for n in ((2, 3) if len(w) >= 4 else (2,)):
                     for i in range(0, len(w) - n + 1):
                         sub = w[i:i + n]
                         if sub not in STOPWORDS:
@@ -72,6 +77,11 @@ def tokenize_split(text: str) -> tuple[list[str], list[str]]:
         else:
             if w not in STOPWORDS and w.strip("ー"):
                 out.append(w)
+            if len(w) >= 4:
+                for i in range(0, len(w) - 1):
+                    sub = w[i:i + 2]
+                    if "ー" not in sub[0] and sub not in STOPWORDS:
+                        subs.append(sub)
     return out, subs
 
 

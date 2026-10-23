@@ -17,12 +17,15 @@ from classifier.base import (CategorySuggestion, ClassificationResult, Classifie
 from scanner.features import cosine, normalize, tfidf_vectors
 from taxonomy.model import Category, Taxonomy, new_category_id
 
-CLUSTER_THRESHOLD = 0.16
+CLUSTER_THRESHOLD = 0.05
 SUBCLUSTER_THRESHOLD = 0.34
 MIN_CLUSTER = 2
 SUBDIVIDE_MIN = 6
 REUSE_CONFIDENCE = 0.6
 NEW_CATEGORY_BELOW = 0.45
+PROFILE_TERMS = 40
+SIM_FULL = 0.2          # この類似度以上を「十分に似ている」とみなす
+MIN_SUGGEST_SIM = 0.03  # これ未満は候補としても出さない
 
 
 class HeuristicClassifier(Classifier):
@@ -55,45 +58,48 @@ class HeuristicClassifier(Classifier):
         scored = []
         for cat in taxonomy.active():
             sim, matched, coverage = self.score_category(doc, cat)
-            scored.append((self._confidence(sim, coverage, len(matched)), sim, cat, matched, coverage))
-        scored.sort(key=lambda x: (-x[0], -x[1], x[2].category_name))
-        result: ClassificationResult
-        if scored and scored[0][0] > 0:
-            conf, sim, cat, matched, coverage = scored[0]
-            second = scored[1][0] if len(scored) > 1 else 0.0
-            # 2 位との差が小さいと曖昧とみなして信頼度を下げる
-            if second > 0 and conf - second < 0.1:
-                conf = conf * 0.85
-            reasons = [
-                f"カテゴリ「{cat.category_name}」の分類条件と一致: {', '.join(matched[:6]) or 'なし'}",
-                f"語彙類似度 {sim:.2f}、条件カバー率 {coverage:.0%}",
-            ]
-            if second > 0:
-                reasons.append(f"次点「{scored[1][2].category_name}」({second:.2f})")
-            result = ClassificationResult(
-                category_id=cat.category_id, confidence=round(min(conf, 1.0), 3), reasons=reasons,
-                matched_keywords=matched, scores={s[2].category_id: round(s[0], 3) for s in scored[:5]},
-            )
-        else:
+            scored.append((sim, cat, matched, coverage))
+        scored.sort(key=lambda x: (-x[0], -len(x[2]), x[1].category_name))
+        if not scored or scored[0][0] < MIN_SUGGEST_SIM or not scored[0][2]:
             result = ClassificationResult(category_id=None, confidence=0.0,
                                           reasons=["既存カテゴリの分類条件に一致しません"])
+        else:
+            sim, cat, matched, coverage = scored[0]
+            second = scored[1][0] if len(scored) > 1 else 0.0
+            conf = self._confidence(sim, len(matched), second)
+            reasons = [
+                f"カテゴリ「{cat.category_name}」の特徴語と一致: {', '.join(matched[:6])}",
+                f"語彙類似度 {sim:.2f}（次点 {second:.2f}）、一致 {len(matched)} 語",
+            ]
+            if conf < 0.5:
+                reasons.append("一致が弱いため候補として表示します")
+            result = ClassificationResult(
+                category_id=cat.category_id, confidence=round(conf, 3), reasons=reasons,
+                matched_keywords=matched, scores={c.category_id: round(x, 3) for x, c, _, _ in scored[:5]},
+            )
         if result.confidence < NEW_CATEGORY_BELOW:
             sug = self.suggest_category(doc)
             if sug:
                 result.new_category = sug
-                result.reasons.append(f"新規カテゴリ「{sug.name}」を提案")
-            if result.confidence < NEW_CATEGORY_BELOW * 0.5:
-                result.category_id = None
+                result.reasons.append(f"新規カテゴリ「{sug.name}」も提案")
         return result
 
     @staticmethod
-    def _confidence(sim: float, coverage: float, matched: int) -> float:
-        if matched == 0:
+    def _confidence(sim: float, matched: int, second: float = 0.0) -> float:
+        """類似度・一致語数・次点との差から信頼度を出す（0〜1）。
+
+        語が 1〜2 語しか一致しない場合は偶然の一致があり得るため上限を設け、
+        自動移動の閾値（初期 0.85）に届かないようにする。
+        """
+        if matched == 0 or sim <= 0:
             return 0.0
-        c = 0.5 * min(1.0, sim / 0.45) + 0.35 * min(1.0, coverage / 0.5) + 0.15 * min(1.0, matched / 4)
+        margin = max(0.0, 1.0 - second / sim)
+        c = 0.55 * min(1.0, sim / SIM_FULL) + 0.25 * min(1.0, matched / 3) + 0.20 * margin
         if matched < 2:
-            c = min(c, 0.55)
-        return c
+            c = min(c, 0.5)
+        elif matched < 3:
+            c = min(c, 0.8)
+        return min(1.0, c)
 
     def suggest_category(self, doc: DocInput) -> CategorySuggestion | None:
         terms = _rank_terms_single(doc)
@@ -144,7 +150,7 @@ class HeuristicClassifier(Classifier):
             name = unique_name(make_name(terms[:2]), used_names, terms)
             used_names.add(name.lower())
             top = terms[:8]
-            weights = cluster_weights(members, top)
+            weights = profile_weights(members, docs, top)
             cid = new_category_id()
             cat = DraftCategory(
                 category_id=cid, name=name,
@@ -274,6 +280,24 @@ def _dedupe_substrings(terms: list[str]) -> list[str]:
             continue
         out.append(t)
     return out
+
+
+def profile_weights(members: list[DocInput], universe: list[DocInput], top: list[str],
+                    size: int = PROFILE_TERMS) -> dict[str, float]:
+    """カテゴリの特徴（語と重み）。表示用の上位語だけでなく、所属ファイル全体の語の分布を持たせる。
+
+    言い回しの違う新しいファイルでも、どこかの語が一致すれば分類できるようにするため。
+    """
+    vecs = tfidf_vectors([d.features for d in universe])
+    idx = {str(d.path): i for i, d in enumerate(universe)}
+    cent = _centroid([vecs[idx[str(m.path)]] for m in members if str(m.path) in idx])
+    ranked = sorted(cent.items(), key=lambda kv: (-kv[1], kv[0]))[:size]
+    w = dict(ranked)
+    for t in top:   # 表示用の分類条件の語は必ず含める
+        w.setdefault(t, cent.get(t, 0.0))
+    mx = max(w.values()) if w else 1.0
+    floor = 0.05
+    return {t: round(max(v / mx, floor), 3) for t, v in w.items()}
 
 
 def cluster_weights(members: list[DocInput], top: list[str]) -> dict[str, float]:

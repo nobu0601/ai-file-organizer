@@ -206,10 +206,13 @@ def apply_operations(tax: Taxonomy, operations: list[dict]) -> Taxonomy:
             if "description" in op:
                 cat.description = str(op["description"])[:1000]
             if "keywords" in op:
+                old_kw = set(cat.keywords)
                 cat.classification_rules["keywords"] = [str(k) for k in op["keywords"]][:30]
+                removed = old_kw - set(cat.classification_rules["keywords"])
+                # 外された語だけを特徴から除く（その他の特徴語は分類のために残す）
                 cat.classification_rules["keyword_weights"] = {
                     k: v for k, v in cat.classification_rules.get("keyword_weights", {}).items()
-                    if k in cat.classification_rules["keywords"]
+                    if k not in removed
                 }
             if "exclusion_rules" in op:
                 cat.exclusion_rules = [str(x) for x in op["exclusion_rules"]][:20]

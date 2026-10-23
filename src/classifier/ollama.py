@@ -185,8 +185,8 @@ class OllamaClassifier(Classifier):
                                           reasons=[f"LLM: 既存カテゴリに該当なし。{reason}"])
             result.new_category = _suggestion(out.get("new_category"), doc) or base.new_category
             return result
-        sim, matched, coverage = self.fallback.score_category(doc, cat)
-        heur = HeuristicClassifier._confidence(sim, coverage, len(matched))
+        sim, matched, _ = self.fallback.score_category(doc, cat)
+        heur = HeuristicClassifier._confidence(sim, len(matched))
         # 自己申告値を鵜呑みにせず、分類条件との一致度と平均をとる
         conf = round(0.5 * llm_conf + 0.5 * heur, 3)
         return ClassificationResult(
