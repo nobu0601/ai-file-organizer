@@ -16,7 +16,7 @@ class FakeClient:
         self.error = error
         self.prompts = []
 
-    def generate_json(self, prompt):
+    def generate_json(self, prompt, schema=None, max_tokens=256):
         self.prompts.append(prompt)
         if self.error:
             raise OllamaError("connection refused")

@@ -34,6 +34,27 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
+CLASSIFY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category_id": {"type": ["string", "null"]},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+        "new_category": {
+            "type": ["object", "null"],
+            "properties": {"name": {"type": "string"}, "description": {"type": "string"},
+                           "keywords": {"type": "array", "items": {"type": "string"}}},
+        },
+    },
+    "required": ["category_id", "confidence", "reason"],
+}
+NAME_SCHEMA = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "description": {"type": "string"}},
+    "required": ["name", "description"],
+}
+
+
 class OllamaError(RuntimeError):
     pass
 
@@ -109,11 +130,14 @@ class OllamaClient:
         if resp.get("status") != "success":
             raise OllamaError(f"ダウンロードに失敗しました: {resp}")
 
-    def generate_json(self, prompt: str) -> dict:
+    def generate_json(self, prompt: str, schema: dict | None = None, max_tokens: int = 256) -> dict:
         model = self.resolve()
         payload = {
-            "model": model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": "json",
-            "stream": False, "options": {"temperature": 0.1, "seed": 42},
+            # schema を渡すと、その形の JSON だけを返すよう Ollama が出力を制約する
+            "model": model, "prompt": prompt, "system": SYSTEM_PROMPT, "format": schema or "json",
+            "stream": False,
+            # num_predict: 出力の長さの上限。同じ語の繰り返しで止まらなくなるのを防ぐ
+            "options": {"temperature": 0.1, "seed": 42, "num_predict": max_tokens},
         }
         if model.startswith("qwen3"):
             # 思考モードは分類には不要で、CPU では大幅に遅くなるため無効にする
@@ -157,11 +181,12 @@ class OllamaClassifier(Classifier):
             "次のカテゴリ一覧から、文書に最も適したものを 1 つ選んでください。適切なものが無ければ null とし、"
             "新しいカテゴリ案を出してください。\n"
             f"カテゴリ一覧:\n{cat_lines}\n\n{_doc_block(doc, 1500)}\n\n"
-            '出力形式: {"category_id": "cat-... または null", "confidence": 0.0〜1.0, "reason": "日本語の理由", '
-            '"new_category": {"name": "...", "description": "...", "keywords": ["..."]} または null}'
+            '出力形式: {"category_id": "cat-... または null", "confidence": 0.0〜1.0, "reason": "日本語の理由（40字以内）", '
+            '"new_category": {"name": "...", "description": "...", "keywords": ["..."]} または null}\n'
+            "new_category は category_id が null のときだけ書いてください。"
         )
         try:
-            out = self.client.generate_json(prompt)
+            out = self.client.generate_json(prompt, CLASSIFY_SCHEMA)
         except OllamaError as e:
             self.last_error = str(e)
             log.warning("Ollama 分類に失敗したため内容ベース分類を使います: %s", e)
@@ -213,7 +238,7 @@ class OllamaClassifier(Classifier):
                 '出力形式: {"name": "...", "description": "..."}'
             )
             try:
-                out = self.client.generate_json(prompt)
+                out = self.client.generate_json(prompt, NAME_SCHEMA, max_tokens=160)
             except OllamaError as e:
                 self.last_error = str(e)
                 draft.notes.append("ローカル LLM が利用できないため、内容ベースで命名しました")
