@@ -148,3 +148,65 @@ def test_embedding_cache_avoids_recompute(make_engine, dirs):
     calls = clf.client.calls
     e.propose_taxonomy()     # 同じファイル（サイズ・更新日時が同じ）は再計算しない
     assert clf.client.calls == calls
+
+
+class FakeChooser:
+    """LLM の代わり。決まった番号を返し、呼ばれた回数を数える。"""
+
+    def __init__(self, pick_name=None):
+        self.pick_name = pick_name      # 選ばせたいカテゴリ名に含まれる語（None なら該当なし）
+        self.calls = 0
+        self.last_error = ""
+
+    def pick(self, doc, cats):
+        self.calls += 1
+        if self.pick_name is None:
+            return None, 0.9, "どれにも当てはまらない"
+        for i, c in enumerate(cats):
+            if any(self.pick_name in e for e in c.examples):
+                return i, 0.9, "内容が近い"
+        return None, 0.5, "見つからない"
+
+    def name_draft(self, draft, docs):
+        return draft
+
+
+def _engine_with_chooser(make_engine, dirs, chooser, **kw):
+    e, clf = _engine(make_engine, dirs, **kw)
+    clf.namer = chooser
+    return e, clf
+
+
+def test_llm_not_called_when_embedding_is_confident(make_engine, dirs):
+    chooser = FakeChooser("invoice")
+    e, clf = _engine_with_chooser(make_engine, dirs, chooser)
+    e.propose_taxonomy()
+    _approve(e)
+    chooser.calls = 0
+    f = write(dirs["watch"] / "tomato_harvest.txt", "トマト 菜園 種まき 肥料 水やり")
+    out = e.process_file(f, "event")
+    assert chooser.calls == 0 and out.category_id == _cat_of(e, "tomato_plan.txt")
+
+
+def test_llm_choice_among_candidates_goes_to_review(make_engine, dirs):
+    chooser = FakeChooser("invoice")      # 経理のカテゴリを選ぶ LLM
+    e, clf = _engine_with_chooser(make_engine, dirs, chooser, preview_mode=False, auto_move=True)
+    e.propose_taxonomy()
+    _approve(e)
+    # 菜園と経理の語が半々: 埋め込みは迷う → LLM に聞き、LLM の選んだ経理を候補にするが自動移動はしない
+    f = write(dirs["watch"] / "mixed.txt", "トマト 菜園 請求書 金額")
+    out = e.process_file(f, "event")
+    assert chooser.calls == 1
+    assert out.category_id == _cat_of(e, "receipt.md") and out.status == F_REVIEW and f.exists()
+
+
+def test_llm_none_keeps_candidate_with_low_confidence(make_engine, dirs):
+    chooser = FakeChooser(None)
+    e, clf = _engine_with_chooser(make_engine, dirs, chooser)
+    e.propose_taxonomy()
+    _approve(e)
+    # 埋め込みが迷うファイルで LLM が「該当なし」→ 候補は残すが信頼度は低く、要確認
+    f = write(dirs["watch"] / "mixed.txt", "トマト 菜園 請求書 金額")
+    out = e.process_file(f, "event")
+    assert chooser.calls == 1
+    assert out.status == F_REVIEW and (out.category_id is None or out.confidence <= 0.4)

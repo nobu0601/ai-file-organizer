@@ -36,6 +36,8 @@ MARGIN_FULL = 0.06           # 次点との差がこれ以上なら「迷いが�
 MIN_SUGGEST_SIM = 0.60
 FALLBACK_HEURISTIC_CONF = 0.55   # 意味の近さがはっきりしないとき、語の一致の候補を出す下限
 REUSE_CONFIDENCE = 0.6
+LLM_SKIP_CONFIDENCE = 0.85   # 埋め込みの信頼度がこれ以上なら LLM に聞かない（速さのため）
+LLM_CANDIDATES = 4           # LLM に見せる候補の数（埋め込みで絞り込む）
 MAX_CLUSTER_DOCS = 400       # 考案時にクラスタリングする最大件数（残りは近いカテゴリへ割り当て）
 BATCH = 16
 
@@ -136,27 +138,59 @@ class SemanticClassifier(Classifier):
         second = ranked[1][0] if len(ranked) > 1 else SIM_FLOOR
         margin = sim - second
         weak_meaning = sim < MIN_SUGGEST_SIM
+        conf = self._confidence(sim, margin)
+        notes: list[str] = []
+        llm_used = False
+
+        # 埋め込みだけでは決めきれないときに、LLM に候補の中から選ばせる
+        if self.namer is not None and (weak_meaning or conf < LLM_SKIP_CONFIDENCE):
+            cands = [(s_, c) for s_, c in ranked[:LLM_CANDIDATES] if s_ >= SIM_FLOOR]
+            if cands:
+                try:
+                    idx, llm_conf, reason = self.namer.pick(doc, [c for _, c in cands])
+                    llm_used = True
+                except OllamaError as e:
+                    self.last_error = str(e)
+                    idx = -1
+                if llm_used and idx is None:
+                    notes.append(f"LLM: 候補のどれにも当てはまらない（{reason}）")
+                    if not weak_meaning:
+                        # 埋め込みの候補は残すが、判断が割れているので自動移動はしない
+                        conf = min(conf, 0.4)
+                elif llm_used:
+                    picked_sim, picked = cands[idx]
+                    if picked.category_id == cat.category_id:
+                        notes.append(f"LLM も同じカテゴリを選択（{reason}）")
+                        weak_meaning = False
+                        conf = max(conf, 0.45) if sim < MIN_SUGGEST_SIM else conf
+                    else:
+                        notes.append(f"LLM が別の候補を選択（{reason}）")
+                        cat, sim = picked, picked_sim
+                        weak_meaning = False
+                        # 埋め込みの 1 位と食い違うので、要確認の候補にとどめる
+                        conf = min(self._confidence(sim, 0.0), 0.6)
+
         if weak_meaning:
             # 意味の近さがはっきりしない: 語の一致がはっきりしていればそちらを、どちらも弱ければ候補なし
             if base.category_id is not None and base.confidence >= FALLBACK_HEURISTIC_CONF:
                 base.reasons.append(f"（意味の近さははっきりしません: 類似度 {sim:.2f}）")
+                base.reasons.extend(notes)
                 return base
-            res = ClassificationResult(category_id=None, confidence=0.0, source=self.name,
-                                       reasons=[f"どのカテゴリとも意味の近さがはっきりしません（類似度 {sim:.2f}）"],
-                                       new_category=base.new_category)
-            return res
-        conf = self._confidence(sim, margin)
+            return ClassificationResult(category_id=None, confidence=0.0, source=self.name,
+                                        reasons=[f"どのカテゴリとも意味の近さがはっきりしません（類似度 {sim:.2f}）"]
+                                        + notes, new_category=base.new_category)
         _, matched, _ = self.heuristic.score_category(doc, cat)
         # 内容ベース分類が同じカテゴリを 1 位に選び、しかも自分でもある程度確信している場合だけ「一致」
         agreed = base.category_id == cat.category_id and base.confidence >= AGREE_MIN_CONFIDENCE
-        reasons = [f"カテゴリ「{cat.category_name}」と意味が近い（類似度 {sim:.2f}、次点との差 {margin:.2f}）"]
+        reasons = [f"カテゴリ「{cat.category_name}」と意味が近い（類似度 {sim:.2f}、次点との差 {margin:.2f}）"] + notes
         if matched:
             reasons.append(f"一致キーワード: {', '.join(matched[:6])}")
         if not agreed:
             reasons.append("内容ベース分類の候補と一致しません")
         return ClassificationResult(
-            category_id=cat.category_id, confidence=conf, reasons=reasons, matched_keywords=matched,
-            source=self.name, scores={c.category_id: round(s, 3) for s, c in ranked[:5]},
+            category_id=cat.category_id, confidence=round(conf, 3), reasons=reasons, matched_keywords=matched,
+            source=self.name + ("+llm" if llm_used else ""),
+            scores={c.category_id: round(s_, 3) for s_, c in ranked[:5]},
             new_category=base.new_category if conf < 0.45 else None, cross_checked=agreed)
 
     # ---------- 分類体系の考案 ----------

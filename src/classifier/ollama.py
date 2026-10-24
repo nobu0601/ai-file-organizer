@@ -48,6 +48,11 @@ CLASSIFY_SCHEMA = {
     },
     "required": ["number", "confidence", "reason"],
 }
+PICK_SCHEMA = {
+    "type": "object",
+    "properties": {"number": {"type": "integer"}, "confidence": {"type": "number"}, "reason": {"type": "string"}},
+    "required": ["number", "confidence", "reason"],
+}
 NAME_SCHEMA = {
     "type": "object",
     "properties": {"name": {"type": "string"}, "description": {"type": "string"}},
@@ -221,6 +226,39 @@ class OllamaClassifier(Classifier):
             base.reasons.append("（ローカル LLM が利用できないため内容ベース分類）")
             return base
         return self._merge(out, base, cats, doc)
+
+    def pick(self, doc: DocInput, cats: list) -> tuple[int | None, float, str]:
+        """候補カテゴリ（埋め込みで絞り込んだもの）から 1 つを選ばせる。
+
+        返り値: (cats の添字 または None=該当なし, LLM の自己申告の確からしさ, 理由)
+        失敗時は OllamaError。
+        """
+        lines = []
+        for i, c in enumerate(cats, 1):
+            ex = "、".join(c.examples[:2])
+            lines.append(f"{i}. {c.relative_path} — {c.description[:120]}"
+                         + (f"（代表ファイル: {ex}）" if ex else ""))
+        prompt = (
+            "文書を、次の候補のうち最も適したカテゴリに分類してください。\n"
+            f"候補:\n" + "\n".join(lines) + f"\n\n{_doc_block(doc, 1500)}\n\n"
+            "ファイル名や語が一致しなくても、文書の内容・目的が最も近い候補を選んでください。"
+            "0（該当なし）は、どの候補とも明らかに無関係な場合だけにしてください。\n"
+            "JSON で次の項目を答えてください。\n"
+            f"- number: 選んだ候補の番号（1〜{len(cats)} の整数）。明らかにどれとも無関係なら 0\n"
+            "- confidence: その判断の確からしさ（0〜1 の数）\n"
+            "- reason: 判断の理由（日本語で 40 字以内）"
+        )
+        out = self.client.generate_json(prompt, PICK_SCHEMA, max_tokens=160)
+        try:
+            n = int(out.get("number", 0))
+        except (TypeError, ValueError):
+            n = 0
+        try:
+            conf = max(0.0, min(1.0, float(out.get("confidence", 0))))
+        except (TypeError, ValueError):
+            conf = 0.0
+        reason = clean_llm_text(out.get("reason"), 120)
+        return (n - 1 if 1 <= n <= len(cats) else None), conf, reason
 
     def _merge(self, out: dict, base: ClassificationResult, cats: list, doc: DocInput
                ) -> ClassificationResult:
