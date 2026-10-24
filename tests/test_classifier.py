@@ -53,13 +53,13 @@ def test_llm_output_validated(make_engine, sample_files, dirs):
     approve_all(e)
     alpha = category_by_keyword(e, "alpha")
     f = write(dirs["watch"] / "alpha_試験結果_3.csv", "Alpha モーター 試験 結果 温度 基板")
-    # 範囲外の番号・見本の書き写しは「該当なし」として捨てられる
+    # 範囲外の番号・見本の書き写しは LLM の判断として採用しない。
+    # 内容ベースの候補は要確認として示すが、自動移動の条件は満たさない
     for bad in (99, -1, "cat-... または null"):
         clf = OllamaClassifier(FakeClient({"number": bad, "confidence": 0.99, "reason": "x"}))
-        assert clf.classify(_doc(f, dirs["watch"]), e.store.taxonomy).category_id is None
-    clf = OllamaClassifier(FakeClient({"number": 99, "confidence": 0.99, "reason": "x"}))
-    r = clf.classify(_doc(f, dirs["watch"]), e.store.taxonomy)
-    assert r.category_id is None
+        r = clf.classify(_doc(f, dirs["watch"]), e.store.taxonomy)
+        assert r.category_id == alpha.category_id and r.confidence <= 0.4 and not r.cross_checked
+        assert not evaluate(r, e.store.taxonomy, _doc(f).parse, 0.85).auto_ok
     # 自己申告 0.99 でも、条件一致度と平均されるため鵜呑みにしない
     clf = OllamaClassifier(FakeClient({"number": _num(e, alpha), "confidence": 0.99, "reason": "alpha"}))
     g = write(dirs["watch"] / "memo.txt", "ほとんど関係のないメモ")
@@ -161,3 +161,16 @@ def test_naming_continues_after_single_failure(make_engine, sample_files):
     e.propose_taxonomy()
     titles = [p.title for p in e.db.list_proposals("pending")]
     assert sum("テーマ名" in t for t in titles) >= 1     # 1 件目の失敗のあとも LLM で命名を続ける
+
+
+def test_llm_no_match_falls_back_to_content_candidate(make_engine, sample_files, dirs):
+    e = make_engine(preview_mode=False, auto_move=True)
+    e.propose_taxonomy()
+    approve_all(e)
+    alpha = category_by_keyword(e, "alpha")
+    f = write(dirs["watch"] / "alpha_試験結果_7.csv", "Alpha モーター 試験 結果 温度 基板")
+    # LLM が「該当なし」と答えても、内容ベースの候補を要確認として示す（自動移動はしない）
+    e._classifier_override = OllamaClassifier(FakeClient({"number": 0, "confidence": 0.9, "reason": "なし"}))
+    out = e.process_file(f, "event")
+    assert out.status == F_REVIEW and out.category_id == alpha.category_id and f.exists()
+    assert out.confidence <= 0.4

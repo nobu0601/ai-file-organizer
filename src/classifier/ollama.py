@@ -218,10 +218,17 @@ class OllamaClassifier(Classifier):
             llm_conf = 0.0
         reason = str(out.get("reason", ""))[:300]
         if cat is None:
-            result = ClassificationResult(category_id=None, confidence=0.0, source="ollama",
-                                          reasons=[f"LLM: 既存カテゴリに該当なし。{reason}"])
-            result.new_category = _suggestion(out.get("new_category"), doc) or base.new_category
-            return result
+            new_cat = _suggestion(out.get("new_category"), doc) or base.new_category
+            if base.category_id is not None:
+                # LLM が該当なしと判断しても、内容ベース分類に候補があれば要確認の候補として示す。
+                # 判断が割れているので自動移動はしない（cross_checked=False、信頼度も低く抑える）
+                return ClassificationResult(
+                    category_id=base.category_id, confidence=round(min(base.confidence, 0.4), 3),
+                    source="ollama", matched_keywords=base.matched_keywords, scores=base.scores,
+                    reasons=[f"LLM: 既存カテゴリに該当なし。{reason}", "内容ベース分類の候補を表示しています"]
+                    + base.reasons, new_category=new_cat, cross_checked=False)
+            return ClassificationResult(category_id=None, confidence=0.0, source="ollama", new_category=new_cat,
+                                        reasons=[f"LLM: 既存カテゴリに該当なし。{reason}"])
         sim, matched, _ = self.fallback.score_category(doc, cat)
         heur = HeuristicClassifier._confidence(sim, len(matched))
         # 自己申告値を鵜呑みにせず、分類条件との一致度と平均をとる
