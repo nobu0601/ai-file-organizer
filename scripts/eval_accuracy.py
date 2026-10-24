@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from classifier.heuristic import HeuristicClassifier  # noqa: E402
 from classifier.ollama import OllamaClassifier, OllamaClient  # noqa: E402
+from classifier.semantic import SemanticClassifier  # noqa: E402
 from organizer.engine import Engine  # noqa: E402
 from settings.config import Settings, WatchFolder  # noqa: E402
 from settings.paths import AppPaths  # noqa: E402
@@ -205,6 +206,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--threshold", type=float, default=0.85)
     ap.add_argument("--no-heuristic", action="store_true")
+    ap.add_argument("--embed", default="", help="埋め込みモデル名（例: bge-m3）。--models と併用すると LLM が命名する")
     ap.add_argument("--out", help="Markdown レポートの出力先")
     ap.add_argument("--json", help="詳細結果（JSON）の出力先")
     args = ap.parse_args()
@@ -213,7 +215,24 @@ def main() -> int:
     if not args.no_heuristic:
         print("内容ベース分類を評価中…", flush=True)
         results.append(run(dataset, "内容ベース（LLM なし）", HeuristicClassifier(), args.threshold))
-    for m in [x.strip() for x in args.models.split(",") if x.strip()]:
+    models = [x.strip() for x in args.models.split(",") if x.strip()]
+    if args.embed:
+        # 埋め込みのみ（命名は内容ベース）と、埋め込み＋各 LLM（命名を LLM）を評価する
+        for m in [None] + models:
+            client = OllamaClient(args.url, m or "auto", args.timeout)
+            if not client.has_model(args.embed):
+                print(f"{args.embed}: スキップ（インストールされていません）", flush=True)
+                break
+            namer = OllamaClassifier(client) if m else None
+            label = f"埋め込み {args.embed}" + (f" + 命名 {m}" if m else "")
+            print(f"{label} を評価中…", flush=True)
+            clf = SemanticClassifier(client, args.embed, namer=namer)
+            res = run(dataset, label, clf, args.threshold)
+            if clf.last_error:
+                res["label"] += "（途中でエラーあり）"
+            results.append(res)
+        models = []
+    for m in models:
         client = OllamaClient(args.url, m, args.timeout)
         ok, msg = client.available()
         if not ok:

@@ -40,6 +40,10 @@ class AppPaths:
         return self.root / "history.sqlite3"
 
     @property
+    def vectors(self) -> Path:
+        return self.root / "vectors.sqlite3"
+
+    @property
     def log_dir(self) -> Path:
         return self.root / "logs"
 

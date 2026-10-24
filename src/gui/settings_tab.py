@@ -102,12 +102,17 @@ class SettingsTab(ttk.Frame):
         ttk.Entry(lf, textvariable=self.v_url, width=40).grid(row=1, column=1, sticky="w")
         ttk.Label(lf, text="モデル").grid(row=2, column=0, sticky="w")
         ttk.Entry(lf, textvariable=self.v_model, width=40).grid(row=2, column=1, sticky="w")
+        self.v_embed = tk.StringVar(value=s.ollama.embed_model)
+        ttk.Label(lf, text="埋め込みモデル").grid(row=5, column=0, sticky="w")
+        ttk.Entry(lf, textvariable=self.v_embed, width=40).grid(row=5, column=1, sticky="w")
+        ttk.Label(lf, foreground="#444", text="意味の近さで分類します（約 1.2GB、1 ファイル 1 秒未満）。空欄にすると使いません").grid(
+            row=6, column=0, columnspan=3, sticky="w")
         ttk.Button(lf, text="接続テスト", command=self.test_ollama).grid(row=1, column=2, rowspan=2, padx=6)
         name, size, ram = engine.recommended_model()
         ram_txt = f"{ram:.0f}GB" if ram else "不明"
         ttk.Label(lf, foreground="#444", text=(
             f"「auto」にすると、インストール済みのモデルからこの PC（メモリ {ram_txt}）で動く最も性能の良いものを使います。\n"
-            f"この PC の推奨モデル: {name}（約 {size}GB）")).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+            f"この PC の推奨モデル: {name}（約 {size}GB）＋ 埋め込みモデル {s.ollama.embed_model}（約 1.2GB）")).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
         self._rec_model = name
         ttk.Button(lf, text=f"推奨モデル {name} をダウンロード", command=self.pull_model).grid(
             row=4, column=0, columnspan=2, sticky="w", pady=4)
@@ -144,7 +149,7 @@ class SettingsTab(ttk.Frame):
     def pull_model(self) -> None:
         name = self._rec_model
         if not messagebox.askyesno("モデルのダウンロード",
-                                   f"Ollama で {name} をダウンロードします（数 GB、回線により数分〜数十分）。\n"
+                                   f"Ollama で {name} と埋め込みモデル {self.v_embed.get().strip() or 'なし'} をダウンロードします（数 GB、回線により数分〜数十分）。\n"
                                    "Ollama が起動している必要があります。続けますか？"):
             return
         self._apply_ollama()
@@ -161,6 +166,7 @@ class SettingsTab(ttk.Frame):
         o.enabled = self.v_ollama.get()
         o.base_url = self.v_url.get().strip()
         o.model = self.v_model.get().strip()
+        o.embed_model = self.v_embed.get().strip()
 
     def save(self) -> None:
         s = self.engine.settings

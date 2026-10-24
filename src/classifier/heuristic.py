@@ -24,6 +24,8 @@ SUBDIVIDE_MIN = 6
 REUSE_CONFIDENCE = 0.6
 NEW_CATEGORY_BELOW = 0.45
 PROFILE_TERMS = 40
+# AI / 埋め込みの判断と「一致した」とみなすのに必要な、内容ベース分類自身の信頼度
+AGREE_MIN_CONFIDENCE = 0.6
 SIM_FULL = 0.2          # この類似度以上を「十分に似ている」とみなす
 MIN_SUGGEST_SIM = 0.03  # これ未満は候補としても出さない
 

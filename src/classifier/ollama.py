@@ -16,7 +16,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from classifier.base import CategorySuggestion, ClassificationResult, Classifier, DocInput, TaxonomyDraft
-from classifier.heuristic import HeuristicClassifier
+from classifier.heuristic import AGREE_MIN_CONFIDENCE, HeuristicClassifier
 from classifier.model_select import AUTO, choose_installed, is_installed, recommended
 from settings.system import total_memory_gb
 from taxonomy.model import Taxonomy
@@ -130,6 +130,25 @@ class OllamaClient:
         if resp.get("status") != "success":
             raise OllamaError(f"ダウンロードに失敗しました: {resp}")
 
+    def embed(self, texts: list[str], model: str) -> list[list[float]]:
+        """埋め込みベクトルを作る（/api/embed）。失敗時は 1 回だけやり直す。"""
+        payload = {"model": model, "input": texts, "keep_alive": "30m"}
+        try:
+            resp = self._request("/api/embed", payload)
+        except OllamaError as first:
+            log.info("埋め込みの作成をやり直します: %s", first)
+            resp = self._request("/api/embed", payload)
+        vecs = resp.get("embeddings")
+        if not isinstance(vecs, list) or len(vecs) != len(texts):
+            raise OllamaError("埋め込みの応答が不正です")
+        return vecs
+
+    def has_model(self, model: str) -> bool:
+        try:
+            return is_installed(model, self.installed_models())
+        except OllamaError:
+            return False
+
     def generate_json(self, prompt: str, schema: dict | None = None, max_tokens: int = 256) -> dict:
         model = self.resolve()
         payload = {
@@ -234,7 +253,7 @@ class OllamaClassifier(Classifier):
         # 自己申告値を鵜呑みにせず、分類条件との一致度と平均をとる
         conf = round(0.5 * llm_conf + 0.5 * heur, 3)
         # 独立した 2 つの方法（LLM と内容ベース）の 1 位が一致したときだけ自動移動の対象にする
-        agreed = base.category_id == cat.category_id
+        agreed = base.category_id == cat.category_id and base.confidence >= AGREE_MIN_CONFIDENCE
         reasons = [f"LLM: {reason}", f"LLM 自己申告 {llm_conf:.2f} / 条件一致度 {heur:.2f}",
                    f"一致キーワード: {', '.join(matched[:6]) or 'なし'}"]
         if not agreed:
@@ -246,9 +265,13 @@ class OllamaClassifier(Classifier):
 
     def propose_taxonomy(self, docs: list[DocInput], taxonomy: Taxonomy) -> TaxonomyDraft:
         draft = self.fallback.propose_taxonomy(docs, taxonomy)
+        # 構造（クラスタ）は内容ベースで決め、名前と説明だけ LLM に考えてもらう
+        return self.name_draft(draft, docs)
+
+    def name_draft(self, draft: TaxonomyDraft, docs: list[DocInput]) -> TaxonomyDraft:
+        """提案中のカテゴリの名前と説明を LLM に考えてもらう（まとめ方は変えない）。"""
         if not draft.new_categories:
             return draft
-        # 構造（クラスタ）は内容ベースで決め、名前と説明だけ LLM に考えてもらう
         by_path = {str(d.path): d for d in docs}
         failures = 0
         for cat in draft.new_categories:

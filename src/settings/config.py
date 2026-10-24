@@ -52,6 +52,8 @@ class OllamaSettings:
     base_url: str = "http://127.0.0.1:11434"
     # "auto": インストール済みモデルから PC のメモリに合う最良のものを自動で使う
     model: str = "auto"
+    # 意味の近さで分類する埋め込みモデル。インストールされていれば自動で使う
+    embed_model: str = "bge-m3"
     timeout_seconds: float = 60.0
 
 
@@ -106,7 +108,7 @@ class Settings:
                 ]
             elif key == "ollama" and isinstance(value, dict):
                 o = OllamaSettings()
-                for ok in ("enabled", "base_url", "model", "timeout_seconds"):
+                for ok in ("enabled", "base_url", "model", "embed_model", "timeout_seconds"):
                     if ok in value:
                         setattr(o, ok, value[ok])
                 s.ollama = o

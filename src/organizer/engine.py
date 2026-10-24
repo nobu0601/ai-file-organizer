@@ -18,7 +18,9 @@ from classifier.base import ClassificationResult, Classifier, DocInput
 from classifier.heuristic import HeuristicClassifier
 from classifier.model_select import recommended
 from classifier.ollama import OllamaClassifier, OllamaClient, OllamaError
+from classifier.semantic import SemanticClassifier
 from classifier.validation import evaluate
+from history.vectors import VectorStore
 from history.db import (F_FAILED, F_MOVED, F_PENDING, F_PROCESSING, F_READY, F_REVIEW, F_SKIPPED, HistoryDB,
                         path_key)
 from organizer.mover import Mover, MoveOutcome
@@ -57,6 +59,7 @@ class Engine:
         self.paths = (paths or AppPaths()).ensure()
         self.settings = settings or load_settings(self.paths.settings_file)
         self.db = HistoryDB(self.paths.database)
+        self.vectors = VectorStore(self.paths.vectors)
         self.store = TaxonomyStore(self.paths)
         self.heuristic = HeuristicClassifier()
         self._classifier_override = classifier
@@ -88,9 +91,21 @@ class Engine:
         o = s.ollama
         if o.enabled:
             try:
-                self._llm = OllamaClassifier(OllamaClient(o.base_url, o.model, o.timeout_seconds), self.heuristic)
+                client = OllamaClient(o.base_url, o.model, o.timeout_seconds)
+                namer = OllamaClassifier(client, self.heuristic)
+                if o.embed_model and client.has_model(o.embed_model):
+                    # 埋め込みモデルがあれば意味の近さで分類し、LLM はカテゴリ名を考える役にする
+                    try:
+                        client.resolve()
+                    except OllamaError:
+                        namer = None
+                    self._llm = SemanticClassifier(client, o.embed_model, self.vectors, self.heuristic, namer)
+                else:
+                    self._llm = namer
             except OllamaError as e:
                 log.warning("Ollama 設定が無効です: %s", e)
+        if self._classifier_override is not None and hasattr(self._classifier_override, "bind_store"):
+            self._classifier_override.bind_store(self.vectors)
 
     @property
     def classifier(self) -> Classifier:
@@ -115,9 +130,15 @@ class Engine:
         return c.name, c.size_gb, ram
 
     def pull_model(self, name: str) -> str:
-        self._client().pull(name)
+        """推奨モデルと、意味の近さで分類する埋め込みモデルをダウンロードする。"""
+        client = self._client()
+        done = []
+        for m in [self.settings.ollama.embed_model, name]:
+            if m and not client.has_model(m):
+                client.pull(m)
+                done.append(m)
         self.rebuild()   # 自動選択をやり直す
-        return f"{name} をダウンロードしました"
+        return f"{', '.join(done)} をダウンロードしました" if done else "必要なモデルは既にあります"
 
     def save_settings(self) -> None:
         save_settings(self.settings, self.paths.settings_file)
@@ -193,6 +214,7 @@ class Engine:
         if self._worker:
             self._worker.join(timeout=5)
         self.db.close()
+        self.vectors.close()
 
     def _ensure_worker(self) -> None:
         if self._worker and self._worker.is_alive():
@@ -365,11 +387,37 @@ class Engine:
                              category_name=cat.category_name, reason=reason)
         if mv.ok:
             self.db.delete_file(p)
+            clf = self.classifier
+            if hasattr(clf, "forget"):
+                clf.forget(str(p))     # 移動元のパスで覚えていた分は移動先のパスに置き換える
+            self._learn(cat.category_id, [mv.dest], "moved")
             dsnap = FileSnapshot.of(Path(mv.dest))
             self.db.upsert_file(mv.dest, status=F_MOVED, size=dsnap.size, mtime=dsnap.mtime,
                                 category_id=cat.category_id, reason=reason, origin="moved")
             self._emit(type="moved", src=str(p), dest=mv.dest)
         return mv
+
+    def _learn(self, category_id: str, paths: list[str], source: str) -> None:
+        """承認・移動されたファイルをカテゴリの特徴として覚える（意味の近さで分類する場合）。"""
+        clf = self.classifier
+        if not hasattr(clf, "learn"):
+            return
+        docs = []
+        for p in paths:
+            try:
+                if Path(p).is_file():
+                    docs.append(self.analyze(Path(p), None))
+            except OSError:
+                continue
+        try:
+            clf.learn(category_id, docs, source)
+        except Exception:
+            log.exception("学習に失敗しました")
+
+    def _on_operations(self, operations: list[dict]) -> None:
+        clf = self.classifier
+        if hasattr(clf, "on_operations"):
+            clf.on_operations(operations)
 
     # ---------- 手動操作 ----------
     def execute_ready(self, paths: list[str] | None = None) -> list[MoveOutcome]:
@@ -427,6 +475,9 @@ class Engine:
         mv = self.mover.undo(op_id)
         if mv.ok:
             self.db.delete_file(mv.dest)
+            clf = self.classifier
+            if hasattr(clf, "forget"):
+                clf.forget(mv.dest)
             snap = FileSnapshot.of(Path(mv.src))
             # 元の場所に戻ったファイルを監視が再分類・再移動しないよう記録する
             self.db.upsert_file(mv.src, status=F_SKIPPED, size=snap.size, mtime=snap.mtime,
@@ -518,6 +569,14 @@ class Engine:
             return False, f"承認できません: {e}"
         for p in props:
             self.db.set_proposal_status(p.id, "approved")
+            for op in p.operations:
+                if op.get("op") == "add":
+                    self._learn(op["category"]["category_id"], p.related_files, "approved")
+                elif op.get("op") == "split":
+                    for child in op.get("children", []):
+                        if child.get("category_id"):
+                            self._learn(child["category_id"], child.get("members", []), "approved")
+        self._on_operations(ops)
         self._refresh_outputs()
         # 関連ファイルを再分類する（承認されたカテゴリで改めて判定）
         related = {f for p in props for f in p.related_files}
@@ -541,6 +600,7 @@ class Engine:
             changed = self.store.apply(operations, reason=reason, pending_proposals=self.pending_proposal_titles())
         except TaxonomyError as e:
             return False, str(e)
+        self._on_operations(operations)
         self._emit(type="taxonomy")
         return True, "変更しました" if changed else "変更はありませんでした"
 
@@ -590,6 +650,7 @@ class Engine:
                 for x in tops:
                     spec = x.to_spec()
                     spec.pop("parent_category_id", None)
+                    spec["members"] = list(x.members)   # 承認時に意味の特徴を覚えるため
                     children.append(spec)
                 created.append(self.db.add_proposal(
                     kind="split", title=title,
