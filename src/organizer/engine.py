@@ -510,8 +510,8 @@ class Engine:
             "classification_rules": {"keywords": sug.keywords, "keyword_weights": sug.keyword_weights},
             "examples": sug.examples,
         }
-        pid = self.db.add_proposal(kind="add", title=f"新規カテゴリ「{sug.name}」",
-                                   reason="既存カテゴリに適合しないファイルが追加されたため",
+        pid = self.db.add_proposal(kind="add", title=f"新しいフォルダ「{sug.name}」",
+                                   reason="今のフォルダ分けに合わないファイルが届いたため",
                                    operations=[{"op": "add", "category": spec}], related_files=[path])
         self._refresh_outputs()
         self._emit(type="taxonomy")
@@ -546,8 +546,8 @@ class Engine:
         created = []
         for c in draft.new_categories:
             parent = next((x for x in draft.new_categories if x.category_id == c.parent_category_id), None)
-            title = f"新規カテゴリ「{c.name}」" + (f"（「{parent.name}」の下位）" if parent else "")
-            reason = f"{len(c.members)}件のファイルに共通するテーマ: {', '.join(c.keywords[:4])}"
+            title = f"新しいフォルダ「{c.name}」" + (f"（「{parent.name}」の中）" if parent else "")
+            reason = f"{len(c.members)}個のファイルに共通する言葉: {', '.join(c.keywords[:4])}"
             pid = self.db.add_proposal(kind="add", title=title, reason=reason,
                                        operations=[{"op": "add", "category": c.to_spec()}],
                                        related_files=c.members, source="ai-initial")

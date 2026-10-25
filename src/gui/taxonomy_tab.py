@@ -19,8 +19,8 @@ class TaxonomyTab(ttk.Frame):
         top.pack(fill="x")
         self.version_var = tk.StringVar()
         ttk.Label(top, textvariable=self.version_var, font=("", 10, "bold")).pack(side="left")
-        ttk.Button(top, text="Markdown を開く", command=lambda: open_path(engine.paths.folder_map_md)).pack(side="right")
-        ttk.Button(top, text="JSON の保存先を開く", command=lambda: open_path(engine.paths.taxonomy_dir)).pack(side="right", padx=4)
+        ttk.Button(top, text="説明書を開く", command=lambda: open_path(engine.paths.folder_map_md)).pack(side="right")
+        ttk.Button(top, text="データの保存先を開く", command=lambda: open_path(engine.paths.taxonomy_dir)).pack(side="right", padx=4)
         ttk.Button(top, text="整理先フォルダを開く", command=self.open_root).pack(side="right")
 
         pw = ttk.PanedWindow(self, orient="horizontal")
@@ -30,7 +30,7 @@ class TaxonomyTab(ttk.Frame):
         pw.add(left, weight=1)
         pw.add(right, weight=2)
 
-        ttk.Label(left, text="承認済みのフォルダ体系").pack(anchor="w")
+        ttk.Label(left, text="決定したフォルダ分け").pack(anchor="w")
         tf = ttk.Frame(left)
         tf.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(tf, show="tree", selectmode="browse")
@@ -41,41 +41,41 @@ class TaxonomyTab(ttk.Frame):
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_detail())
         cb = ttk.Frame(left)
         cb.pack(fill="x", pady=4)
-        ttk.Button(cb, text="名前を変更", command=self.rename).pack(side="left")
-        ttk.Button(cb, text="親を変更", command=self.reparent).pack(side="left", padx=4)
-        ttk.Button(cb, text="説明を編集", command=self.edit_description).pack(side="left")
+        ttk.Button(cb, text="名前変更", command=self.rename).pack(side="left")
+        ttk.Button(cb, text="置き場所", command=self.reparent).pack(side="left", padx=4)
+        ttk.Button(cb, text="説明変更", command=self.edit_description).pack(side="left")
 
         self.detail = tk.Text(right, height=12, wrap="word")
         self.detail.pack(fill="x")
         self.detail.configure(state="disabled")
 
-        pf = ttk.LabelFrame(right, text="未承認の提案（AI の案。承認するまで正式体系に反映されません）", padding=4)
+        pf = ttk.LabelFrame(right, text="AI の提案（まだ決定していません。採用するとフォルダ分けに加わります）", padding=4)
         pf.pack(fill="both", expand=True, pady=6)
         self.props = make_tree(pf, [("kind", "種類", 60), ("title", "内容", 330), ("reason", "理由", 300),
                                     ("files", "関連", 50)], height=7)
         self.props.bind("<<TreeviewSelect>>", lambda e: self.show_proposal())
         pb = ttk.Frame(pf)
         pb.pack(fill="x", pady=4)
-        ttk.Button(pb, text="選択を承認", command=self.approve).pack(side="left")
-        ttk.Button(pb, text="すべて承認", command=self.approve_all).pack(side="left", padx=4)
-        ttk.Button(pb, text="選択を拒否", command=self.reject).pack(side="left")
-        ttk.Button(pb, text="統合・分割の変更案を作成", command=self.suggest).pack(side="left", padx=12)
+        ttk.Button(pb, text="選んだ提案を採用", command=self.approve).pack(side="left")
+        ttk.Button(pb, text="すべて採用", command=self.approve_all).pack(side="left", padx=4)
+        ttk.Button(pb, text="採用しない", command=self.reject).pack(side="left")
+        ttk.Button(pb, text="フォルダ分けの見直し案を作る", command=self.suggest).pack(side="left", padx=12)
 
-        cf = ttk.LabelFrame(right, text="実フォルダとの整合性", padding=4)
+        cf = ttk.LabelFrame(right, text="実際のフォルダとの照合", padding=4)
         cf.pack(fill="both", expand=True)
         self.mismatch = make_tree(cf, [("kind", "種類", 120), ("path", "パス", 220), ("message", "内容", 300),
                                        ("suggestion", "修正案", 300)], height=5)
         mb = ttk.Frame(cf)
         mb.pack(fill="x", pady=4)
-        ttk.Button(mb, text="整合性チェック", command=self.check).pack(side="left")
-        ttk.Button(mb, text="選択した修正案を適用（作成/改名のみ）", command=self.apply_fix).pack(side="left", padx=4)
+        ttk.Button(mb, text="実際のフォルダと照合", command=self.check).pack(side="left")
+        ttk.Button(mb, text="選んだ修正を反映（作成・名前変更のみ）", command=self.apply_fix).pack(side="left", padx=4)
         self._mismatches = {}
         self.refresh()
 
     # ---------- 表示 ----------
     def refresh(self) -> None:
         tax = self.engine.store.taxonomy
-        self.version_var.set(f"分類体系 v{tax.taxonomy_version}（更新 {tax.updated_at}） 有効カテゴリ {len(tax.active())} 件")
+        self.version_var.set(f"フォルダ {len(tax.active())} 個（版 {tax.taxonomy_version}、更新 {tax.updated_at[:16].replace('T', ' ')}）")
         sel = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         for c in tax.active():
@@ -164,12 +164,12 @@ class TaxonomyTab(ttk.Frame):
         sel = self.tree.selection()
         c = self.engine.store.taxonomy.get(sel[0]) if sel else None
         if not c:
-            messagebox.showinfo("分類体系", "カテゴリを選択してください")
+            messagebox.showinfo("フォルダ分け", "左の一覧からフォルダを選んでください")
         return c
 
     def _change(self, ops, reason) -> None:
         ok, msg = self.engine.change_taxonomy(ops, reason)
-        (messagebox.showinfo if ok else messagebox.showerror)("分類体系", msg + (
+        (messagebox.showinfo if ok else messagebox.showerror)("フォルダ分け", msg + (
             "\n実フォルダとの差分は「整合性チェック」で確認できます。" if ok else ""))
         self.on_change()
 
@@ -221,7 +221,7 @@ class TaxonomyTab(ttk.Frame):
             fill_tree(self.mismatch, [(k, (label.get(m.kind, m.kind), m.path, m.message, m.suggestion))
                                       for k, m in self._mismatches.items()])
             if not res:
-                messagebox.showinfo("整合性チェック", "実フォルダと分類体系は一致しています")
+                messagebox.showinfo("照合", "実際のフォルダとフォルダ分けは一致しています")
 
         self.ui.run(self.engine.consistency, done)
 

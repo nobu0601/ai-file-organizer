@@ -70,7 +70,7 @@ class HeuristicClassifier(Classifier):
             second = scored[1][0] if len(scored) > 1 else 0.0
             conf = self._confidence(sim, len(matched), second)
             reasons = [
-                f"カテゴリ「{cat.category_name}」の特徴語と一致: {', '.join(matched[:6])}",
+                f"「{cat.category_name}」によく出る言葉を含みます: {', '.join(matched[:6])}",
                 f"語彙類似度 {sim:.2f}（次点 {second:.2f}）、一致 {len(matched)} 語",
             ]
             if conf < 0.5:
@@ -83,7 +83,7 @@ class HeuristicClassifier(Classifier):
             sug = self.suggest_category(doc)
             if sug:
                 result.new_category = sug
-                result.reasons.append(f"新規カテゴリ「{sug.name}」も提案")
+                result.reasons.append(f"新しいフォルダ「{sug.name}」も提案")
         return result
 
     @staticmethod

@@ -45,22 +45,22 @@ def evaluate(result: ClassificationResult, taxonomy: Taxonomy, parse: ParseResul
     if parse.status not in READABLE_STATUSES:
         reasons.append(f"内容を読み取れません（{parse.status}）{(': ' + parse.error) if parse.error else ''}")
     if sensitive_reason:
-        reasons.append(f"機密情報の可能性: {sensitive_reason}")
+        reasons.append(f"大事な情報（パスワードなど）が含まれていそうです: {sensitive_reason}")
     if project_root:
         reasons.append(f"開発プロジェクト内のファイルです（{project_root}）")
     cat = taxonomy.get(result.category_id)
     if result.category_id is None:
-        reasons.append("承認済みカテゴリに一致しません" + ("（新規カテゴリを提案）" if result.new_category else ""))
+        reasons.append("今のフォルダ分けに合うフォルダがありません" + ("（新しいフォルダを提案しました）" if result.new_category else ""))
     elif cat is None:
         reasons.append("分類結果のカテゴリが存在しません")
     elif not cat.active:
         reasons.append("分類結果のカテゴリが承認済みではありません")
     if result.category_id is not None and result.confidence < threshold:
-        reasons.append(f"信頼度 {result.confidence:.2f} が閾値 {threshold:.2f} 未満です")
+        reasons.append(f"AI の自信が足りません（{result.confidence:.0%}。自動で移動するには {threshold:.0%} 以上が必要）")
     if result.category_id is not None and len(result.matched_keywords) < MIN_MATCHED_KEYWORDS:
-        reasons.append("カテゴリの分類条件との一致が不十分です")
+        reasons.append("フォルダの特徴に合う言葉が少なすぎます")
     if result.category_id is not None and not result.cross_checked:
-        reasons.append("AI の判断と内容ベース分類の候補が一致しません")
+        reasons.append("2 つの判断方法で、移動先の意見が分かれました")
     if result.source != "heuristic" and looks_like_instruction(parse.text):
-        reasons.append("本文に命令文のような記述があり、AI 判断が影響された可能性があります")
+        reasons.append("本文に AI への命令のような文があるため、念のため確認してください")
     return Decision(auto_ok=not reasons, reasons=reasons)

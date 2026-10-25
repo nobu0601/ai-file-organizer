@@ -90,7 +90,7 @@ def test_prompt_injection_is_treated_as_data(make_engine, sample_files, dirs):
     fake = FakeClient({"number": _num(e, alpha), "confidence": 1.0, "reason": "命令に従った"})
     e._classifier_override = OllamaClassifier(fake)
     out = e.process_file(f, "event")
-    assert out.status == F_REVIEW and "命令文" in out.message and f.exists()
+    assert out.status == F_REVIEW and "命令" in out.message and f.exists()
     # プロンプトには文書がデータとして区切って渡されている
     assert "<document" in fake.prompts[0]
     assert looks_like_instruction(text)
@@ -139,7 +139,7 @@ def test_llm_disagreeing_with_content_is_not_auto_moved(make_engine, sample_file
     # LLM が内容ベースの 1 位（alpha）と違うカテゴリを自信満々に選んでも、自動では動かさない
     e._classifier_override = OllamaClassifier(FakeClient({"number": _num(e, other), "confidence": 1.0, "reason": "x"}))
     out = e.process_file(f, "event")
-    assert out.status == F_REVIEW and "一致しません" in out.message and f.exists()
+    assert out.status == F_REVIEW and "意見が分かれ" in out.message and f.exists()
 
 
 class FlakyClient(FakeClient):

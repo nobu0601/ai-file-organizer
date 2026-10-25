@@ -20,7 +20,7 @@ class HistoryTab(ttk.Frame):
                                      ("reason", "分類理由", 300), ("error", "エラー", 260)], height=20)
         bar = ttk.Frame(self)
         bar.pack(fill="x", pady=4)
-        ttk.Button(bar, text="選択した整理を取り消す", command=self.undo).pack(side="left")
+        ttk.Button(bar, text="選んだ移動を元に戻す", command=self.undo).pack(side="left")
         ttk.Button(bar, text="移動先を開く", command=self.reveal).pack(side="left", padx=4)
         ttk.Button(bar, text="更新", command=self.refresh).pack(side="left")
         self.refresh()
