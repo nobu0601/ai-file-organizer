@@ -9,6 +9,14 @@ from gui.common import UiBridge, fill_tree, make_tree, reveal_in_explorer, short
 from history.db import F_FAILED, F_PENDING, F_READY, F_REVIEW
 from organizer.engine import Engine
 
+REFERENCE_BELOW = 0.5   # これ未満の信頼度の候補は「参考」として扱う
+
+
+def is_reference(r) -> bool:
+    """要確認ファイルの候補が参考程度（信頼度が低い）か。"""
+    return r.status != F_READY and r.confidence is not None and r.confidence < REFERENCE_BELOW
+
+
 LABEL = {F_READY: "実行待ち", F_REVIEW: "要確認", F_FAILED: "失敗", F_PENDING: "未分類"}
 
 
@@ -29,10 +37,15 @@ class ReviewTab(ttk.Frame):
                           state="readonly", width=10)
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+        # 信頼度の低い候補は「参考」として薄く表示する。不要なら非表示にできる
+        self.show_ref_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(flt, text=f"参考候補も表示（信頼度 {REFERENCE_BELOW:.1f} 未満の候補は薄い文字で表示）",
+                        variable=self.show_ref_var, command=self.refresh).pack(side="left", padx=12)
 
         self.tree = make_tree(self, [("status", "状態", 70), ("file", "ファイル名", 260), ("folder", "場所", 220),
                                      ("category", "分類先（候補）", 180), ("conf", "信頼度", 60),
                                      ("reason", "理由", 460)], height=16)
+        self.tree.tag_configure("reference", foreground="#9a9a9a")
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.show_detail())
         self.detail = tk.Text(self, height=6, wrap="word")
         self.detail.pack(fill="x", pady=4)
@@ -63,14 +76,23 @@ class ReviewTab(ttk.Frame):
         tax = self.engine.store.taxonomy
         rows = []
         self._by_path = {}
+        show_ref = self.show_ref_var.get()
         for r in self._records():
             cat = tax.get(r.category_id)
-            name = cat.relative_path if cat else (f"（新規案）{r.detail.get('new_category')}"
-                                                  if r.detail.get("new_category") else "—")
-            conf = f"{r.confidence:.2f}" if r.confidence is not None else ""
+            tags: tuple = ()
+            if cat and is_reference(r):
+                # 信頼度の低い候補: 参考として薄く表示（非表示の設定なら候補を出さない）
+                name = f"（参考）{cat.relative_path}" if show_ref else "—"
+                tags = ("reference",) if show_ref else ()
+            elif cat:
+                name = cat.relative_path
+            else:
+                name = (f"（新規案）{r.detail.get('new_category')}" if r.detail.get("new_category") else "—")
+            hide_conf = cat is not None and is_reference(r) and not show_ref
+            conf = f"{r.confidence:.2f}" if r.confidence is not None and not hide_conf else ""
             p = Path(r.path)
             rows.append((r.path, (LABEL.get(r.status, r.status), p.name, short(str(p.parent), 40), name, conf,
-                                  r.reason or "")))
+                                  r.reason or ""), tags))
             self._by_path[r.path] = r
         fill_tree(self.tree, rows)
         self._cats = {c.relative_path: c.category_id for c in tax.active()}
@@ -82,6 +104,9 @@ class ReviewTab(ttk.Frame):
         if sel:
             r = self._by_path.get(sel[0])
             if r:
+                cat = self.engine.store.taxonomy.get(r.category_id)
+                if cat and (self.show_ref_var.get() or not is_reference(r)):
+                    self.cat_var.set(cat.relative_path)   # 候補をそのまま移動先に指定できるようにする
                 d = r.detail
                 text = (f"ファイル: {r.path}\n判定: {r.reason}\n"
                         f"分類の根拠: {' / '.join(d.get('reasons', []))}\n"

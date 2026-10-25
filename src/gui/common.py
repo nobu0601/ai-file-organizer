@@ -126,12 +126,14 @@ def make_tree(parent: tk.Misc, columns: list[tuple[str, str, int]], height: int 
     return tree
 
 
-def fill_tree(tree: ttk.Treeview, rows: list[tuple[str, tuple]]) -> None:
-    """選択状態を保ったまま行を入れ替える。rows: (iid, values)"""
+def fill_tree(tree: ttk.Treeview, rows: list[tuple]) -> None:
+    """選択状態を保ったまま行を入れ替える。rows: (iid, values) または (iid, values, tags)"""
     selected = set(tree.selection())
     tree.delete(*tree.get_children())
-    for iid, values in rows:
-        tree.insert("", "end", iid=iid, values=values)
+    for row in rows:
+        iid, values = row[0], row[1]
+        tags = row[2] if len(row) > 2 else ()
+        tree.insert("", "end", iid=iid, values=values, tags=tags)
     keep = [i for i in selected if tree.exists(i)]
     if keep:
         tree.selection_set(keep)
