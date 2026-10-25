@@ -142,10 +142,8 @@ class SemanticClassifier(Classifier):
         notes: list[str] = []
         llm_used = False
 
-        # 埋め込みだけでは決めきれないとき、または内容ベース分類と判断が割れたときに、
-        # LLM に候補の中から選ばせる
-        heuristic_agrees = base.category_id == cat.category_id and base.confidence >= AGREE_MIN_CONFIDENCE
-        if self.namer is not None and (weak_meaning or conf < LLM_SKIP_CONFIDENCE or not heuristic_agrees):
+        # 埋め込みだけでは決めきれないときに、LLM に候補の中から選ばせる
+        if self.namer is not None and (weak_meaning or conf < LLM_SKIP_CONFIDENCE):
             cands = [(s_, c) for s_, c in ranked[:LLM_CANDIDATES] if s_ >= SIM_FLOOR]
             if cands:
                 try:
@@ -156,15 +154,9 @@ class SemanticClassifier(Classifier):
                     idx = -1
                 if llm_used and idx is None:
                     notes.append(f"LLM: 候補のどれにも当てはまらない（{reason}）")
-                    if not weak_meaning and base.category_id == cat.category_id:
-                        # 埋め込みと内容ベースの 1 位が同じなら候補として残す（自動移動はしない）
+                    if not weak_meaning:
+                        # 埋め込みの候補は残すが、判断が割れているので自動移動はしない
                         conf = min(conf, 0.4)
-                    else:
-                        # 根拠が埋め込みだけなら、無関係なファイルの可能性が高いので候補を出さない
-                        return ClassificationResult(
-                            category_id=None, confidence=0.0, source=self.name + "+llm",
-                            reasons=[f"どのカテゴリにも当てはまりません（類似度 {sim:.2f}）"] + notes,
-                            new_category=base.new_category)
                 elif llm_used:
                     picked_sim, picked = cands[idx]
                     if picked.category_id == cat.category_id:
