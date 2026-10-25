@@ -210,3 +210,27 @@ def test_llm_none_keeps_candidate_with_low_confidence(make_engine, dirs):
     out = e.process_file(f, "event")
     assert chooser.calls == 1
     assert out.status == F_REVIEW and (out.category_id is None or out.confidence <= 0.4)
+
+
+def test_embedding_only_candidate_dropped_when_llm_says_none(make_engine, dirs):
+    chooser = FakeChooser(None)
+    e, clf = _engine_with_chooser(make_engine, dirs, chooser)
+    e.propose_taxonomy()
+    _approve(e)
+    chooser.calls = 0
+    # 埋め込みは菜園に近いと判断するが、語の一致はない → LLM に確認し、該当なしなら候補を出さない
+    f = write(dirs["watch"] / "untitled.html", "コンポスト")
+    out = e.process_file(f, "event")
+    assert chooser.calls == 1
+    assert out.status == F_REVIEW and out.category_id is None
+
+
+def test_llm_consulted_when_content_disagrees_even_if_embedding_confident(make_engine, dirs):
+    chooser = FakeChooser("tomato")
+    e, clf = _engine_with_chooser(make_engine, dirs, chooser)
+    e.propose_taxonomy()
+    _approve(e)
+    chooser.calls = 0
+    f = write(dirs["watch"] / "untitled.html", "コンポスト")
+    out = e.process_file(f, "event")
+    assert chooser.calls == 1 and out.category_id == _cat_of(e, "tomato_plan.txt")
