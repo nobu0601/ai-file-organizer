@@ -234,18 +234,3 @@ def test_llm_consulted_when_content_disagrees_even_if_embedding_confident(make_e
     f = write(dirs["watch"] / "untitled.html", "コンポスト")
     out = e.process_file(f, "event")
     assert chooser.calls == 1 and out.category_id == _cat_of(e, "tomato_plan.txt")
-
-
-def test_confident_embedding_kept_when_llm_picks_other(make_engine, dirs):
-    chooser = FakeChooser("invoice")       # 経理を選ぶ LLM
-    e, clf = _engine_with_chooser(make_engine, dirs, chooser)
-    e.propose_taxonomy()
-    _approve(e)
-    chooser.calls = 0
-    # 埋め込みは菜園と確信、語の一致は無く内容ベースと割れる → LLM に確認するが、
-    # LLM が別の候補を選んでも埋め込みの判断を残す（要確認）
-    # 菜園 0.90 / 経理 0.52 の 2 候補になる文書
-    f = write(dirs["watch"] / "untitled.html", "コンポスト 水やり 経費")
-    out = e.process_file(f, "event")
-    assert chooser.calls == 1
-    assert out.category_id == _cat_of(e, "tomato_plan.txt") and out.status == F_REVIEW

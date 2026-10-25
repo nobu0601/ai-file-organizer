@@ -154,28 +154,23 @@ class SemanticClassifier(Classifier):
                 except OllamaError as e:
                     self.last_error = str(e)
                     idx = -1
-                # 埋め込みが確信しているのに内容ベースと割れたため LLM に確認した場合（確認のみ）
-                confirm_only = not weak_meaning and conf >= LLM_SKIP_CONFIDENCE
                 if llm_used and idx is None:
                     notes.append(f"LLM: 候補のどれにも当てはまらない（{reason}）")
-                    if confirm_only or weak_meaning:
-                        # 根拠が埋め込みだけで LLM も否定 → 無関係なファイルの可能性が高いので候補を出さない
+                    if not weak_meaning and base.category_id == cat.category_id:
+                        # 埋め込みと内容ベースの 1 位が同じなら候補として残す（自動移動はしない）
+                        conf = min(conf, 0.4)
+                    else:
+                        # 根拠が埋め込みだけなら、無関係なファイルの可能性が高いので候補を出さない
                         return ClassificationResult(
                             category_id=None, confidence=0.0, source=self.name + "+llm",
                             reasons=[f"どのカテゴリにも当てはまりません（類似度 {sim:.2f}）"] + notes,
                             new_category=base.new_category)
-                    # 埋め込みが迷っている場合は、候補として残す（自動移動はしない）
-                    conf = min(conf, 0.4)
                 elif llm_used:
                     picked_sim, picked = cands[idx]
                     if picked.category_id == cat.category_id:
                         notes.append(f"LLM も同じカテゴリを選択（{reason}）")
                         weak_meaning = False
                         conf = max(conf, 0.45) if sim < MIN_SUGGEST_SIM else conf
-                    elif confirm_only:
-                        # 埋め込みが確信している場合は、LLM が別の候補を選んでも埋め込みの判断を残す
-                        notes.append(f"LLM は別の候補を選択（{reason}）。埋め込みの判断を表示します")
-                        conf = min(conf, 0.6)
                     else:
                         notes.append(f"LLM が別の候補を選択（{reason}）")
                         cat, sim = picked, picked_sim
