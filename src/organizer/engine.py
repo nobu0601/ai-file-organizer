@@ -19,7 +19,7 @@ from classifier.heuristic import HeuristicClassifier
 from classifier.model_select import recommended
 from classifier.ollama import OllamaClassifier, OllamaClient, OllamaError
 from classifier.semantic import SemanticClassifier
-from classifier.validation import evaluate
+from classifier.validation import evaluate, looks_like_instruction
 from history.vectors import VectorStore
 from history.db import (F_FAILED, F_MOVED, F_PENDING, F_PROCESSING, F_READY, F_REVIEW, F_SKIPPED, HistoryDB,
                         path_key)
@@ -607,23 +607,69 @@ class Engine:
                             self._learn(child["category_id"], child.get("members", []), "approved")
             self._on_operations(ops)
         self._refresh_outputs()
+        # 採用したフォルダは、ファイルを移動する前でもすぐ作る（仕上がりを先に確かめられるように）
+        member_of: dict[str, str] = {}   # ファイル → 採用したフォルダ（提案に含まれていたファイル）
+        for p in approved:
+            for op in p.operations:
+                if op.get("op") == "add":
+                    cid = op["category"]["category_id"]
+                    for f in p.related_files:
+                        member_of.setdefault(f, alias.get(cid, cid))
+        self._create_folders({alias.get(c, c) for c in member_of.values()} |
+                             {alias.get(op["category"]["category_id"], op["category"]["category_id"])
+                              for p in approved for op in p.operations if op.get("op") == "add"})
         # 関連ファイルを再分類する（採用したフォルダ分けで改めて判定）
         related = {f for p in approved for f in p.related_files}
         for f in related:
             rec = self.db.get_file(f)
             if Path(f).is_file() and (rec is None or rec.status in (F_REVIEW, F_PENDING, F_FAILED)):
                 self.db.delete_file(f)
-                self.process_file(f, rec.origin if rec and rec.origin else "scan")
+                out = self.process_file(f, rec.origin if rec and rec.origin else "scan")
+                if out.status == F_REVIEW and f in member_of:
+                    self._mark_member_ready(Path(f), member_of[f])
         self._emit(type="taxonomy")
         lines = []
         if approved:
-            lines.append(f"{len(approved)} 件の提案を採用しました。")
+            lines.append(f"{len(approved)} 件の提案を採用し、整理先にフォルダを作りました: {self.organize_root}")
+            ready = sum(1 for r in self.db.list_files((F_READY,)) if r.path in related)
+            if ready:
+                lines.append(f"移動待ちのファイルが {ready} 件あります。「確認して移動」の画面で移動してください。")
         for name in dict.fromkeys(merged):
             lines.append(f"「{name}」は同じ名前のフォルダがあるため、1 つにまとめました。")
         if failed:
             lines.append("採用できなかった提案:")
             lines += [f"・{x}" for x in failed]
         return bool(approved), "\n".join(lines)
+
+    def _create_folders(self, category_ids: set[str]) -> None:
+        tax = self.store.taxonomy
+        for cid in category_ids:
+            c = tax.get(cid)
+            if c is None or not c.active:
+                continue
+            try:
+                self.organize_root.joinpath(*c.relative_path.split("/")).mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                log.warning("フォルダを作れませんでした: %s (%s)", c.relative_path, e)
+
+    def _mark_member_ready(self, p: Path, category_id: str) -> None:
+        """採用した提案に含まれていたファイルは、あなたが見て決めた移動先として「移動待ち」にする。
+        ただし、大事な情報が含まれていそうなファイルや読めないファイルなどは確認待ちのままにする。"""
+        cat = self.store.taxonomy.get(category_id)
+        rec = self.db.get_file(p)
+        if cat is None or not cat.active or rec is None:
+            return
+        w = self._watch_root_for(str(p))
+        root = Path(w.path) if w else None
+        doc = self.analyze(p, root)
+        if (not doc.parse.readable or self.safety.sensitive_reason(p, doc.parse.text)
+                or self.safety.find_project_root(p, root) or looks_like_instruction(doc.parse.text)):
+            return
+        detail = dict(rec.detail or {}) | {"waiting": "採用した提案に含まれていたファイル",
+                                           "suggested_name": cat.category_name}
+        self.db.upsert_file(str(p), status=F_READY, size=rec.size, mtime=rec.mtime, category_id=cat.category_id,
+                            confidence=rec.confidence, reason=f"採用したフォルダ「{cat.category_name}」の提案に含まれていたファイル",
+                            detail=detail, origin=rec.origin)
 
     def _merge_same_name(self, operations: list[dict], alias: dict[str, str]) -> tuple[list[dict], list[str]]:
         """フォルダ追加のうち、同じ場所に同じ名前のフォルダが既にあるものは、そのフォルダへの言葉の追加に置き換える。"""

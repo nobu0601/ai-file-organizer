@@ -142,7 +142,9 @@ def test_consistency_detects_mismatches(make_engine, sample_files, dirs):
     e.propose_taxonomy()
     approve_all(e)
     cats = e.store.taxonomy.active()
-    # 1 つだけ実フォルダを作り、別に未登録フォルダも作る
+    # 採用時に作られたフォルダを消し、1 つだけ実フォルダを作り、別に未登録フォルダも作る
+    import shutil
+    shutil.rmtree(dirs["dest"])
     (dirs["dest"] / cats[0].relative_path).mkdir(parents=True)
     (dirs["dest"] / "手動で作ったフォルダ").mkdir()
     res = check_consistency(e.store.taxonomy, dirs["dest"])
@@ -234,3 +236,18 @@ def test_approve_all_continues_after_failed_proposal(make_engine):
     assert [c.category_name for c in e.store.taxonomy.active()] == ["家計簿"]
     assert "採用できなかった" in msg
     assert [p.id for p in e.db.list_proposals("pending")] == [bad]
+
+
+def test_approve_creates_folders_and_marks_members_ready(make_engine, sample_files, dirs):
+    """採用するとフォルダがすぐ作られ、提案に含まれていたファイルは移動待ちになる。"""
+    e = make_engine()
+    e.propose_taxonomy()
+    props = e.db.list_proposals("pending")
+    members = {f for p in props for f in p.related_files}
+    approve_all(e)
+    for c in e.store.taxonomy.active():
+        assert (dirs["dest"] / c.relative_path).is_dir()
+    ready = {r.path for r in e.db.list_files(("ready",))}
+    assert members and members <= ready
+    # まだ何も移動していない（フォルダは空）
+    assert not any(f.is_file() for f in dirs["dest"].rglob("*"))
