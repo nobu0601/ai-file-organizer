@@ -544,13 +544,29 @@ class Engine:
             if prop.source in ("ai-initial",):
                 self.db.set_proposal_status(prop.id, "superseded")
         created = []
+        same_name: dict[tuple, str] = {}   # (親, 名前) → 先に作った提案（同じ名前の提案を 2 つ作らない）
+        alias: dict[str, str] = {}
         for c in draft.new_categories:
             parent = next((x for x in draft.new_categories if x.category_id == c.parent_category_id), None)
+            spec = c.to_spec()
+            spec["parent_category_id"] = alias.get(spec["parent_category_id"], spec["parent_category_id"])
+            key = (spec["parent_category_id"], c.name.strip().lower())
+            if key in same_name:
+                prev = self.db.get_proposal(same_name[key])
+                prev_spec = prev.operations[0]["category"]
+                alias[c.category_id] = prev_spec["category_id"]
+                rules = prev_spec.setdefault("classification_rules", {})
+                rules["keywords"] = list(dict.fromkeys(rules.get("keywords", []) + c.keywords))[:30]
+                files = list(dict.fromkeys(prev.related_files + c.members))
+                self.db.update_proposal(prev.id, operations=prev.operations, related_files=files,
+                                        reason=f"{len(files)}個のファイルに共通する言葉: {', '.join(rules['keywords'][:4])}")
+                continue
             title = f"新しいフォルダ「{c.name}」" + (f"（「{parent.name}」の中）" if parent else "")
             reason = f"{len(c.members)}個のファイルに共通する言葉: {', '.join(c.keywords[:4])}"
             pid = self.db.add_proposal(kind="add", title=title, reason=reason,
-                                       operations=[{"op": "add", "category": c.to_spec()}],
+                                       operations=[{"op": "add", "category": spec}],
                                        related_files=c.members, source="ai-initial")
+            same_name[key] = pid
             created.append(pid)
         self._refresh_outputs()
         self._emit(type="taxonomy")
@@ -558,35 +574,81 @@ class Engine:
                 "unassigned": len(draft.unassigned), "notes": draft.notes, "source": draft.source}
 
     def approve_proposals(self, proposal_ids: list[str]) -> tuple[bool, str]:
+        """提案を 1 件ずつ採用する。同じ名前のフォルダはまとめ、採用できない提案があってもほかは進める。"""
         props = [p for p in (self.db.get_proposal(i) for i in proposal_ids) if p and p.status == "pending"]
         if not props:
-            return False, "承認できる提案がありません"
-        ops = [op for p in props for op in p.operations]
-        reason = " / ".join(f"{p.title}: {p.reason}" for p in props)
-        try:
-            changed = self.store.apply(ops, reason=reason)
-        except TaxonomyError as e:
-            return False, f"承認できません: {e}"
+            return False, "採用できる提案がありません"
+        # 中のフォルダの提案は、親フォルダの提案のあとに処理する
+        added = {op["category"]["category_id"] for p in props for op in p.operations if op.get("op") == "add"}
+        props.sort(key=lambda p: any(op.get("op") == "add" and op["category"].get("parent_category_id") in added
+                                     for op in p.operations))
+        alias: dict[str, str] = {}   # 提案のフォルダ ID → 実際に使うフォルダ ID（同名フォルダにまとめた場合）
+        approved, merged, failed = [], [], []
         for p in props:
+            trial = dict(alias)
+            ops, names = self._merge_same_name(p.operations, trial)
+            try:
+                if ops:
+                    self.store.apply(ops, reason=f"{p.title}: {p.reason}")
+            except TaxonomyError as e:
+                failed.append(f"{p.title}（{e}）")
+                continue
+            alias = trial
+            merged += names
+            approved.append(p)
             self.db.set_proposal_status(p.id, "approved")
             for op in p.operations:
                 if op.get("op") == "add":
-                    self._learn(op["category"]["category_id"], p.related_files, "approved")
+                    cid = op["category"]["category_id"]
+                    self._learn(alias.get(cid, cid), p.related_files, "approved")
                 elif op.get("op") == "split":
                     for child in op.get("children", []):
                         if child.get("category_id"):
                             self._learn(child["category_id"], child.get("members", []), "approved")
-        self._on_operations(ops)
+            self._on_operations(ops)
         self._refresh_outputs()
-        # 関連ファイルを再分類する（承認されたカテゴリで改めて判定）
-        related = {f for p in props for f in p.related_files}
+        # 関連ファイルを再分類する（採用したフォルダ分けで改めて判定）
+        related = {f for p in approved for f in p.related_files}
         for f in related:
             rec = self.db.get_file(f)
             if Path(f).is_file() and (rec is None or rec.status in (F_REVIEW, F_PENDING, F_FAILED)):
                 self.db.delete_file(f)
                 self.process_file(f, rec.origin if rec and rec.origin else "scan")
         self._emit(type="taxonomy")
-        return True, ("分類体系を更新しました" if changed else "変更はありませんでした")
+        lines = []
+        if approved:
+            lines.append(f"{len(approved)} 件の提案を採用しました。")
+        for name in dict.fromkeys(merged):
+            lines.append(f"「{name}」は同じ名前のフォルダがあるため、1 つにまとめました。")
+        if failed:
+            lines.append("採用できなかった提案:")
+            lines += [f"・{x}" for x in failed]
+        return bool(approved), "\n".join(lines)
+
+    def _merge_same_name(self, operations: list[dict], alias: dict[str, str]) -> tuple[list[dict], list[str]]:
+        """フォルダ追加のうち、同じ場所に同じ名前のフォルダが既にあるものは、そのフォルダへの言葉の追加に置き換える。"""
+        out, names = [], []
+        for op in operations:
+            if op.get("op") != "add":
+                out.append(op)
+                continue
+            spec = dict(op["category"])
+            parent = spec.get("parent_category_id")
+            spec["parent_category_id"] = alias.get(parent, parent)
+            name = str(spec.get("category_name", "")).strip().lower()
+            same = next((c for c in self.store.taxonomy.active()
+                         if c.parent_category_id == spec["parent_category_id"]
+                         and c.category_name.strip().lower() == name), None)
+            if same is None:
+                out.append({**op, "category": spec})
+                continue
+            alias[spec["category_id"]] = same.category_id
+            new_kw = spec.get("classification_rules", {}).get("keywords", [])
+            keywords = list(dict.fromkeys(same.keywords + list(new_kw)))[:30]
+            if keywords != same.keywords:
+                out.append({"op": "update", "category_id": same.category_id, "keywords": keywords})
+            names.append(same.category_name)
+        return out, names
 
     def reject_proposals(self, proposal_ids: list[str]) -> None:
         for pid in proposal_ids:

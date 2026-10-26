@@ -131,12 +131,12 @@ class TaxonomyTab(ttk.Frame):
     # ---------- 提案 ----------
     def _approve(self, ids) -> None:
         if not ids:
-            messagebox.showinfo("承認", "提案を選択してください")
+            messagebox.showinfo("採用", "採用する提案を一覧から選んでください")
             return
 
         def done(res):
             ok, msg = res
-            (messagebox.showinfo if ok else messagebox.showerror)("承認", msg)
+            (messagebox.showinfo if ok else messagebox.showerror)("採用", msg)
             self.on_change()
 
         self.ui.run(lambda: self.engine.approve_proposals(list(ids)), done)
@@ -145,12 +145,12 @@ class TaxonomyTab(ttk.Frame):
         self._approve(self.props.selection())
 
     def approve_all(self) -> None:
-        if self._props and messagebox.askyesno("承認", f"{len(self._props)} 件の提案をすべて承認しますか？"):
+        if self._props and messagebox.askyesno("採用", f"{len(self._props)} 件の提案をすべて採用しますか？"):
             self._approve(list(self._props))
 
     def reject(self) -> None:
         ids = self.props.selection()
-        if ids and messagebox.askyesno("拒否", f"{len(ids)} 件の提案を拒否しますか？"):
+        if ids and messagebox.askyesno("採用しない", f"{len(ids)} 件の提案を採用しませんか？"):
             self.engine.reject_proposals(list(ids))
             self.on_change()
 

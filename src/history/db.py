@@ -251,14 +251,14 @@ class HistoryDB:
         return pid
 
     def update_proposal(self, pid: str, *, operations: list[dict] | None = None,
-                        related_files: list[str] | None = None) -> None:
+                        related_files: list[str] | None = None, reason: str | None = None) -> None:
         p = self.get_proposal(pid)
         if not p:
             return
-        self._exec("UPDATE proposals SET operations=?, related_files=? WHERE id=?",
+        self._exec("UPDATE proposals SET operations=?, related_files=?, reason=? WHERE id=?",
                    (json.dumps(operations if operations is not None else p.operations, ensure_ascii=False),
                     json.dumps(related_files if related_files is not None else p.related_files, ensure_ascii=False),
-                    pid))
+                    reason if reason is not None else p.reason, pid))
 
     def set_proposal_status(self, pid: str, status: str) -> None:
         self._exec("UPDATE proposals SET status=?, decided_at=? WHERE id=?", (status, now_iso(), pid))

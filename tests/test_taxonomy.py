@@ -185,3 +185,52 @@ def test_split_suggestion_from_real_folder(make_engine, dirs):
     props = [e.db.get_proposal(p) for p in created]
     assert any(p.kind == "split" for p in props)
     assert e.store.taxonomy.children(cid) == []   # 承認まで反映されない
+
+
+def _add_proposal(e, name, keywords, files=(), parent=None):
+    spec = {"category_id": new_category_id(), "category_name": name, "parent_category_id": parent,
+            "description": "", "classification_rules": {"keywords": list(keywords), "keyword_weights": {}},
+            "exclusion_rules": [], "examples": []}
+    return e.db.add_proposal(kind="add", title=f"新しいフォルダ「{name}」", reason="テスト",
+                             operations=[{"op": "add", "category": spec}], related_files=list(files)), spec
+
+
+def test_approve_all_merges_same_name_proposals(make_engine):
+    """同じ名前の提案をまとめて採用しても失敗せず、1 つのフォルダにまとまる。"""
+    e = make_engine()
+    a, _ = _add_proposal(e, "請求書", ["請求", "金額"])
+    b, _ = _add_proposal(e, "請求書", ["振込", "請求"])
+    ok, msg = e.approve_proposals([a, b])
+    assert ok, msg
+    cats = e.store.taxonomy.active()
+    assert [c.category_name for c in cats] == ["請求書"]
+    assert {"請求", "金額", "振込"} <= set(cats[0].keywords)
+    assert e.db.list_proposals("pending") == []
+    assert "まとめました" in msg
+
+
+def test_approve_proposal_with_existing_name_and_child(make_engine):
+    """既にあるフォルダと同じ名前の提案（その中のフォルダの提案つき）も採用できる。"""
+    e = make_engine()
+    first, _ = _add_proposal(e, "旅行", ["旅行", "ホテル"])
+    assert e.approve_proposals([first])[0]
+    dup, parent_spec = _add_proposal(e, "旅行", ["旅行", "航空券"])
+    child, _ = _add_proposal(e, "京都", ["京都", "旅館"], parent=parent_spec["category_id"])
+    other, _ = _add_proposal(e, "家計簿", ["家計", "支出"])
+    ok, msg = e.approve_proposals([child, dup, other])
+    assert ok, msg
+    tax = e.store.taxonomy
+    assert sorted(c.relative_path for c in tax.active()) == ["家計簿", "旅行", "旅行/京都"]
+    assert e.db.list_proposals("pending") == []
+
+
+def test_approve_all_continues_after_failed_proposal(make_engine):
+    """採用できない提案が 1 件あっても、ほかの提案は採用する。"""
+    e = make_engine()
+    bad, _ = _add_proposal(e, "迷子", ["迷子"], parent="cat_does_not_exist")
+    good, _ = _add_proposal(e, "家計簿", ["家計", "支出"])
+    ok, msg = e.approve_proposals([bad, good])
+    assert ok
+    assert [c.category_name for c in e.store.taxonomy.active()] == ["家計簿"]
+    assert "採用できなかった" in msg
+    assert [p.id for p in e.db.list_proposals("pending")] == [bad]
