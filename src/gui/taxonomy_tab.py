@@ -21,7 +21,7 @@ class TaxonomyTab(ttk.Frame):
         ttk.Label(top, textvariable=self.version_var, font=("", 10, "bold")).pack(side="left")
         ttk.Button(top, text="説明書を開く", command=lambda: open_path(engine.paths.folder_map_md)).pack(side="right")
         ttk.Button(top, text="データの保存先を開く", command=lambda: open_path(engine.paths.taxonomy_dir)).pack(side="right", padx=4)
-        ttk.Button(top, text="整理先フォルダを開く", command=self.open_root).pack(side="right")
+        ttk.Button(top, text="整理したフォルダを開く", command=self.open_root).pack(side="right")
 
         pw = ttk.PanedWindow(self, orient="horizontal")
         pw.pack(fill="both", expand=True, pady=6)
@@ -124,7 +124,7 @@ class TaxonomyTab(ttk.Frame):
         self._set_detail("\n".join(lines))
 
     def open_root(self) -> None:
-        root = self.engine.organize_root
+        root = self.engine.dest_roots()[0]
         root.mkdir(parents=True, exist_ok=True)
         open_path(root)
 

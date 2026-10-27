@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from classifier.base import ClassificationResult, Classifier, DocInput, DraftCategory, TaxonomyDraft
-from classifier.heuristic import (AGREE_MIN_CONFIDENCE, MIN_CLUSTER, HeuristicClassifier, describe, make_name, profile_weights,
+from classifier.heuristic import (AGREE_MIN_CONFIDENCE, MIN_CLUSTER, HeuristicClassifier, describe, name_cluster, profile_weights,
                                   rank_terms, unique_name)
 from classifier.ollama import OllamaClient, OllamaError
 from history.db import path_key
@@ -237,7 +237,7 @@ class SemanticClassifier(Classifier):
                 continue
             members = [docs[i] for i in g]
             terms = rank_terms(members, docs) or [d.path.stem for d in members[:1]]
-            name = unique_name(make_name(terms[:2]), used, terms)
+            name = unique_name(name_cluster(members, terms), used, terms)
             used.add(name.lower())
             top = terms[:8]
             cid = new_category_id()

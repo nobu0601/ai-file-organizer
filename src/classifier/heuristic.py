@@ -107,7 +107,8 @@ class HeuristicClassifier(Classifier):
         terms = _rank_terms_single(doc)
         if len(terms) < 2:
             return None
-        name = make_name(terms[:2])
+        nt = naming_terms(terms)
+        name = make_name(nt[:2] if len(nt) > 1 and nt[1] not in NAME_GENERIC else nt[:1])
         top = terms[:8]
         mx = max(doc.features.weights.get(t, 1.0) for t in top) or 1.0
         return CategorySuggestion(
@@ -149,7 +150,7 @@ class HeuristicClassifier(Classifier):
             terms = rank_terms(members, docs)
             if len(terms) < 1:
                 continue
-            name = unique_name(make_name(terms[:2]), used_names, terms)
+            name = unique_name(name_cluster(members, terms), used_names, terms)
             used_names.add(name.lower())
             top = terms[:8]
             weights = profile_weights(members, docs, top)
@@ -311,14 +312,67 @@ def cluster_weights(members: list[DocInput], top: list[str]) -> dict[str, float]
     return {t: round(v / mx, 3) for t, v in w.items()}
 
 
+# フォルダ名にすると中身がわからない言葉（分類の手掛かりには使う。名前にだけ使わない）
+NAME_GENERIC = {
+    "対応", "設定", "検討", "連絡", "予約", "目標", "申請", "スケジュール", "チェック", "年度", "経験", "変更案",
+    "金額", "予定", "確認", "資料", "メモ", "一覧", "報告", "管理", "記録", "結果", "比較", "まとめ", "下書き",
+    "計画", "準備", "内容", "情報", "作成", "時間", "日程", "費用", "合計", "状況", "進捗", "案", "表", "リスト",
+    "候補", "方針", "整理", "提出", "支払", "支払い", "担当", "参加", "必要", "利用", "使用", "追加", "変更", "実施",
+    "前回", "今回", "次回", "全体", "詳細", "概要", "結論", "手順", "方法", "注意", "事項", "以下", "合わせ",
+    "万円", "円", "固定", "件", "個", "回", "番号", "全員", "当日", "期間",
+    "memo", "note", "notes", "list", "data", "draft", "plan", "check", "report", "result", "results", "test",
+}
+_SEG_SPLIT = re.compile(r"[_\-\s.・()（）\[\]【】「」,，、]+")
+_NOISE_SEG = re.compile(r"^(v(er)?\d+|\d+([年月日回号週期q]\d*)*|第\d+[回号表]|\d{4}[a-z]?\d*|[a-z]?\d+)$", re.IGNORECASE)
+
+
+def naming_terms(terms: list[str]) -> list[str]:
+    """名前に使う言葉（中身がわからない一般的な言葉を後ろに回す）。"""
+    good = [t for t in terms if t not in NAME_GENERIC]
+    return good + [t for t in terms if t in NAME_GENERIC]
+
+
+def _pretty(t: str) -> str:
+    if re.fullmatch(r"[a-z0-9]+", t):
+        return t.upper() if len(t) <= 3 else t.capitalize()
+    return t
+
+
 def make_name(terms: list[str]) -> str:
-    parts = []
-    for t in terms:
-        if re.fullmatch(r"[a-z0-9]+", t):
-            parts.append(t.upper() if len(t) <= 3 else t.capitalize())
-        else:
-            parts.append(t)
+    parts = [_pretty(t) for t in terms]
+    if len(parts) == 2 and not (parts[0].isascii() or parts[1].isascii()):
+        return "・".join(parts)[:60]   # 日本語どうしは「京都・伏見」のようにつなぐ
     return " ".join(parts)[:60] or "未命名"
+
+
+def name_cluster(members: list[DocInput], terms: list[str]) -> str:
+    """まとまりの名前を決める。複数のファイル名に共通する言葉（例: 京都旅行、読書会）を優先する。"""
+    stems = [m.path.stem for m in members]
+    segs = [[x for x in _SEG_SPLIT.split(st) if x and not _NOISE_SEG.match(x)] for st in stems]
+    need = max(2, math.ceil(len(members) * 0.4))
+    best = None
+    for rank, t in enumerate(naming_terms(terms)[:10]):
+        if t in NAME_GENERIC:
+            break
+        df = sum(1 for st in stems if t in st.lower())
+        if df >= need and (best is None or df > best[0]):
+            best = (df, rank, t)
+    if best is None:
+        nt = naming_terms(terms)
+        # 2 語目が一般的な言葉なら、1 語だけにする（「大規模修繕・年度」→「大規模修繕」）
+        return make_name(nt[:2] if len(nt) > 1 and nt[1] not in NAME_GENERIC else nt[:1])
+    t = best[2]
+    # その言葉を含むファイル名の区切り（例: 「京都」→「京都旅行」）のうち、複数のファイル名に出るものを使う
+    counts = Counter()
+    for ss in segs:
+        for x in set(ss):
+            if t in x.lower() and len(x) <= 12:
+                counts[x] += 1
+    cands = [(c, len(x), x) for x, c in counts.items() if c >= 2 and x.lower() != t
+             and not any(g in x for g in ("メモ", "一覧", "下書き"))]
+    if cands:
+        return _pretty(max(cands)[2].lower()) if max(cands)[2].isascii() else max(cands)[2]
+    return _pretty(t)
 
 
 def unique_name(name: str, used: set[str], terms: list[str]) -> str:

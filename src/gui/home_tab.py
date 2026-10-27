@@ -172,7 +172,8 @@ class HomeTab(tk.Frame):
             c.set_buttons([("見張りを始める", self._start, current == 3)])
 
         self.footer.configure(
-            text=f"AI: {self._ai_label()} ／ 整理先: {e.settings.organize_root}"
+            text=f"AI: {self._ai_label()} ／ フォルダを作る場所: "
+                 + ("整理するフォルダの中" if e.settings.organize_in_place else e.settings.organize_root)
                  + ("　⏳ 処理中…" if self.ui.busy else ""))
 
     def _ai_label(self) -> str:

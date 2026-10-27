@@ -35,7 +35,7 @@ def make_engine(dirs):
     engines = []
 
     def factory(**overrides) -> Engine:
-        s = Settings(organize_root=str(dirs["dest"]),
+        s = Settings(organize_root=str(dirs["dest"]), organize_in_place=overrides.pop("in_place", False),
                      watch_folders=[WatchFolder(str(dirs["watch"]), overrides.pop("recursive", False))],
                      stability_checks=overrides.pop("stability_checks", 1),
                      stability_quiet_seconds=overrides.pop("quiet", 0.0),

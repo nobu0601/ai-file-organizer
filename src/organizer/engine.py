@@ -78,6 +78,7 @@ class Engine:
         s = self.settings
         self.organize_root = Path(s.organize_root)
         self.safety = SafetyChecker(s, protected_roots=[self.paths.root, self.organize_root])
+        self._update_protection()
         self.extractor = ContentExtractor(s.max_parse_bytes, s.max_text_chars)
         self.mover = Mover(self.db, self.safety, s.use_sha256)
         if not hasattr(self, "queue"):
@@ -159,7 +160,8 @@ class Engine:
         p = Path(path).resolve()
         if not p.is_dir():
             raise ValueError("フォルダが見つかりません")
-        if is_within(p, self.organize_root) or (recursive and is_within(self.organize_root, p)):
+        if not self.settings.organize_in_place and (
+                is_within(p, self.organize_root) or (recursive and is_within(self.organize_root, p))):
             raise ValueError("整理先フォルダ（またはそれを含むフォルダの再帰監視）は監視対象にできません")
         if is_within(p, self.paths.root):
             raise ValueError("アプリの管理用データ領域は監視対象にできません")
@@ -167,6 +169,7 @@ class Engine:
             raise ValueError("既に登録されています")
         self.settings.watch_folders.append(WatchFolder(str(p), recursive))
         self.save_settings()
+        self._create_folders({c.category_id for c in self.store.taxonomy.active()}, [p])
 
     def remove_watch_folder(self, path: str) -> None:
         self.settings.watch_folders = [w for w in self.settings.watch_folders if w.path != path]
@@ -382,8 +385,9 @@ class Engine:
         return ProcessOutcome(str(p), F_FAILED, mv.message, cat.category_id, result.confidence)
 
     def _move_to_category(self, p: Path, cat, snap: FileSnapshot | None, reason: str) -> MoveOutcome:
-        dest_dir = self.organize_root.joinpath(*cat.relative_path.split("/"))
-        mv = self.mover.move(p, dest_dir, self.organize_root, expected=snap, category_id=cat.category_id,
+        root = self.dest_root_for(p)
+        dest_dir = root.joinpath(*cat.relative_path.split("/"))
+        mv = self.mover.move(p, dest_dir, root, expected=snap, category_id=cat.category_id,
                              category_name=cat.category_name, reason=reason)
         if mv.ok:
             self.db.delete_file(p)
@@ -490,7 +494,33 @@ class Engine:
         return [f"{p.title}（{p.reason}）" for p in self.db.list_proposals("pending")]
 
     def _refresh_outputs(self) -> None:
+        self._update_protection()
         self.store.export_markdown(self.pending_proposal_titles())
+
+    # ---------- 整理先 ----------
+    def dest_roots(self) -> list[Path]:
+        """フォルダを作る場所の一覧（整理するフォルダの中に作る設定なら、整理するフォルダそのもの）。"""
+        if self.settings.organize_in_place and self.settings.watch_folders:
+            return [Path(w.path) for w in self.settings.watch_folders]
+        return [self.organize_root]
+
+    def dest_root_for(self, path: str | Path) -> Path:
+        """ファイルの移動先フォルダを作る場所。整理するフォルダの中に作る設定なら、そのファイルがあるフォルダ。"""
+        if self.settings.organize_in_place:
+            w = self._watch_root_for(str(path))
+            if w:
+                return Path(w.path)
+        return self.organize_root
+
+    def _update_protection(self) -> None:
+        """整理済みのフォルダを、もう一度整理する対象から外す。"""
+        prot = [self.paths.root]
+        if self.settings.organize_in_place and self.settings.watch_folders:
+            tops = {c.relative_path.split("/")[0] for c in self.store.taxonomy.categories.values() if c.relative_path}
+            prot += [Path(w.path) / t for w in self.settings.watch_folders for t in sorted(tops)]
+        else:
+            prot.append(self.organize_root)
+        self.safety.protected_roots[:] = prot
 
     def _propose_new_category(self, result: ClassificationResult, path: str) -> str:
         sug = result.new_category
@@ -615,9 +645,10 @@ class Engine:
                     cid = op["category"]["category_id"]
                     for f in p.related_files:
                         member_of.setdefault(f, alias.get(cid, cid))
+        roots = list(dict.fromkeys(self.dest_root_for(f) for f in member_of)) or self.dest_roots()
         self._create_folders({alias.get(c, c) for c in member_of.values()} |
                              {alias.get(op["category"]["category_id"], op["category"]["category_id"])
-                              for p in approved for op in p.operations if op.get("op") == "add"})
+                              for p in approved for op in p.operations if op.get("op") == "add"}, roots)
         # 関連ファイルを再分類する（採用したフォルダ分けで改めて判定）
         related = {f for p in approved for f in p.related_files}
         for f in related:
@@ -630,7 +661,8 @@ class Engine:
         self._emit(type="taxonomy")
         lines = []
         if approved:
-            lines.append(f"{len(approved)} 件の提案を採用し、整理先にフォルダを作りました: {self.organize_root}")
+            lines.append(f"{len(approved)} 件の提案を採用し、次の場所にフォルダを作りました: "
+                         + "、".join(str(r) for r in roots))
             ready = sum(1 for r in self.db.list_files((F_READY,)) if r.path in related)
             if ready:
                 lines.append(f"移動待ちのファイルが {ready} 件あります。「確認して移動」の画面で移動してください。")
@@ -641,16 +673,18 @@ class Engine:
             lines += [f"・{x}" for x in failed]
         return bool(approved), "\n".join(lines)
 
-    def _create_folders(self, category_ids: set[str]) -> None:
+    def _create_folders(self, category_ids: set[str], roots: list[Path]) -> None:
         tax = self.store.taxonomy
-        for cid in category_ids:
-            c = tax.get(cid)
-            if c is None or not c.active:
-                continue
-            try:
-                self.organize_root.joinpath(*c.relative_path.split("/")).mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                log.warning("フォルダを作れませんでした: %s (%s)", c.relative_path, e)
+        self._update_protection()
+        for root in roots:
+            for cid in category_ids:
+                c = tax.get(cid)
+                if c is None or not c.active:
+                    continue
+                try:
+                    root.joinpath(*c.relative_path.split("/")).mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    log.warning("フォルダを作れませんでした: %s (%s)", c.relative_path, e)
 
     def _mark_member_ready(self, p: Path, category_id: str) -> None:
         """採用した提案に含まれていたファイルは、あなたが見て決めた移動先として「移動待ち」にする。
@@ -735,13 +769,14 @@ class Engine:
                         reason=f"分類条件の重複が大きいため（共通語: {', '.join(sorted(ka & kb)[:5])}）",
                         operations=[{"op": "merge", "source_ids": [b.category_id], "target_id": a.category_id}]))
         for c in cats:
-            folder = self.organize_root.joinpath(*c.relative_path.split("/"))
-            if not folder.is_dir() or tax.children(c.category_id):
+            folders = [r.joinpath(*c.relative_path.split("/")) for r in self.dest_roots()]
+            folders = [f for f in folders if f.is_dir()]
+            if not folders or tax.children(c.category_id):
                 continue
             docs = []
-            for p in iter_files(folder, False, self.safety):
+            for p in (x for folder in folders for x in iter_files(folder, False, self.safety)):
                 try:
-                    d = self.analyze(p, folder)
+                    d = self.analyze(p, p.parent)
                 except OSError:
                     continue
                 if d.parse.readable:
@@ -772,10 +807,24 @@ class Engine:
 
     def consistency(self) -> list[Mismatch]:
         hist = collect_history_paths(self.store.history_snapshots())
-        return check_consistency(self.store.taxonomy, self.organize_root, hist)
+        in_place = self.settings.organize_in_place and self.settings.watch_folders
+        out = []
+        for root in self.dest_roots():
+            for m in check_consistency(self.store.taxonomy, root, hist):
+                # 整理するフォルダの中には元々あなたのフォルダがあるので、「未登録フォルダ」とは言わない
+                if in_place and m.kind == "unknown_folder":
+                    continue
+                if len(self.dest_roots()) > 1:
+                    m.path = str(root / m.path)
+                if m.fix:
+                    m.fix = dict(m.fix, root=str(root))
+                out.append(m)
+        return out
 
     def apply_consistency_fix(self, fix: dict) -> str:
-        return apply_fix(fix, self.organize_root)
+        fix = dict(fix)
+        root = Path(fix.pop("root", self.organize_root))
+        return apply_fix(fix, root)
 
     # ---------- 状態 ----------
     def stats(self) -> dict:

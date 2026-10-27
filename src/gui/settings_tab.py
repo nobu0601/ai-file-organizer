@@ -61,11 +61,18 @@ class SettingsTab(ttk.Frame):
             r += 1
 
         g.columnconfigure(1, weight=1)
+        self.v_in_place = tk.BooleanVar(value=s.organize_in_place)
+        row("フォルダを作る場所", ttk.Checkbutton(g, text="整理するフォルダの中に作る（例: ダウンロード\\請求書）",
+                                         variable=self.v_in_place, command=self._toggle_root),
+            "おすすめ。外すと、下の整理先フォルダの中に作ります")
         self.v_root = tk.StringVar(value=s.organize_root)
         f = ttk.Frame(g)
-        ttk.Entry(f, textvariable=self.v_root, width=60).pack(side="left", fill="x", expand=True)
-        ttk.Button(f, text="参照…", command=self.pick_root).pack(side="left", padx=4)
-        row("整理先フォルダ", f, "カテゴリのフォルダはこの下に作られます")
+        self.e_root = ttk.Entry(f, textvariable=self.v_root, width=60)
+        self.e_root.pack(side="left", fill="x", expand=True)
+        self.b_root = ttk.Button(f, text="参照…", command=self.pick_root)
+        self.b_root.pack(side="left", padx=4)
+        row("整理先フォルダ", f, "上のチェックを外したときだけ使います")
+        self._toggle_root()
         self.v_thr = tk.DoubleVar(value=s.confidence_threshold)
         row("自動移動の信頼度閾値", ttk.Spinbox(g, from_=0.5, to=1.0, increment=0.01, textvariable=self.v_thr, width=8),
             "初期値 0.85。これ未満は要確認")
@@ -168,11 +175,17 @@ class SettingsTab(ttk.Frame):
         o.model = self.v_model.get().strip()
         o.embed_model = self.v_embed.get().strip()
 
+    def _toggle_root(self) -> None:
+        state = ["disabled"] if self.v_in_place.get() else ["!disabled"]
+        self.e_root.state(state)
+        self.b_root.state(state)
+
     def save(self) -> None:
         s = self.engine.settings
+        s.organize_in_place = self.v_in_place.get()
         try:
             new_root = Path(self.v_root.get()).expanduser()
-            for w in s.watch_folders:
+            for w in ([] if s.organize_in_place else s.watch_folders):
                 if w.recursive and is_within(new_root, w.path):
                     if not messagebox.askyesno("確認", "整理先が再帰監視フォルダの中にあります。整理先は監視から除外されますが、"
                                                      "よろしいですか？"):

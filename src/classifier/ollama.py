@@ -154,6 +154,12 @@ class OllamaClient:
         except OllamaError:
             return False
 
+    def load(self, timeout: float = 600) -> None:
+        """モデルを読み込んでおく。GPU の無いパソコンでは初回の読み込みに数分かかることがある。"""
+        model = self.resolve()
+        self._request("/api/generate", {"model": model, "prompt": "", "stream": False, "keep_alive": "30m"},
+                      timeout=max(timeout, self.timeout))
+
     def generate_json(self, prompt: str, schema: dict | None = None, max_tokens: int = 256) -> dict:
         model = self.resolve()
         payload = {
@@ -311,6 +317,13 @@ class OllamaClassifier(Classifier):
         if not draft.new_categories:
             return draft
         by_path = {str(d.path): d for d in docs}
+        try:
+            if hasattr(self.client, "load"):
+                self.client.load()
+        except OllamaError as e:
+            self.last_error = str(e)
+            draft.notes.append("ローカル LLM を読み込めないため、内容ベースで命名しました")
+            return draft
         failures = 0
         for cat in draft.new_categories:
             members = [by_path[m] for m in cat.members if m in by_path][:8]
@@ -319,7 +332,8 @@ class OllamaClassifier(Classifier):
             blocks = "\n".join(_doc_block(m, 300) for m in members)
             prompt = (
                 "次のファイル群は同じテーマでまとめられました。JSON で次の項目を答えてください。\n"
-                "- name: フォルダ名として使う短いカテゴリ名（日本語可、20 文字以内）。テーマが一目でわかる具体的な名前\n"
+                "- name: フォルダ名として使う短いカテゴリ名（日本語可、20 文字以内）。テーマが一目でわかる具体的な名詞句"
+                "（例: 京都旅行、確定申告、ピアノ教室）。ファイル名をそのまま使わない。「資料」「関連」「管理」などの付け足しは不要\n"
                 "- description: このカテゴリの目的と、格納するファイルの説明（100 文字以内）\n"
                 f"特徴語: {', '.join(cat.keywords)}\n{blocks}"
             )
@@ -334,6 +348,8 @@ class OllamaClassifier(Classifier):
                     return draft
                 continue
             name = clean_llm_text(out.get("name"), 40)
+            if not is_folder_name(name):
+                name = ""
             desc = clean_llm_text(out.get("description"), 300)
             if name and name.lower() not in {c.name.lower() for c in draft.new_categories if c is not cat}:
                 cat.name = name
@@ -341,6 +357,15 @@ class OllamaClassifier(Classifier):
                 cat.description = desc
         draft.source = "ollama"
         return draft
+
+
+def is_folder_name(name: str) -> bool:
+    """フォルダ名として自然か（ファイル名の写し・記号入り・長すぎるものは使わない）。"""
+    if not name or len(name) > 24:
+        return False
+    if re.search(r'[_\\/:*?"<>|]', name) or re.search(r"\.[A-Za-z0-9]{2,4}$", name):
+        return False
+    return True
 
 
 _PLACEHOLDER = re.compile(r"^[\s.…・\-_*?？「」\"'()（）]*$")

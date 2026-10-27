@@ -67,6 +67,8 @@ class WatchFolder:
 class Settings:
     watch_folders: list[WatchFolder] = field(default_factory=list)
     organize_root: str = field(default_factory=lambda: str(default_organize_root()))
+    # True: 整理するフォルダの中に直接フォルダを作る（例: ダウンロード\請求書）。False: organize_root の下に作る
+    organize_in_place: bool = True
 
     preview_mode: bool = True
     auto_classify: bool = True
