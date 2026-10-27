@@ -157,8 +157,14 @@ class OllamaClient:
     def load(self, timeout: float = 600) -> None:
         """モデルを読み込んでおく。GPU の無いパソコンでは初回の読み込みに数分かかることがある。"""
         model = self.resolve()
-        self._request("/api/generate", {"model": model, "prompt": "", "stream": False, "keep_alive": "30m"},
-                      timeout=max(timeout, self.timeout))
+        payload = {"model": model, "prompt": "", "stream": False, "keep_alive": "30m"}
+        try:
+            self._request("/api/generate", payload, timeout=max(timeout, self.timeout))
+        except OllamaError as first:
+            # 初回はモデルのファイルを読むのに時間がかかり、Ollama 側の待ち時間（5 分）を超えることがある。
+            # 2 回目は読み込み済みの部分が残っていて速いので、1 回だけやり直す
+            log.info("モデルの読み込みをやり直します: %s", first)
+            self._request("/api/generate", payload, timeout=max(timeout, self.timeout))
 
     def generate_json(self, prompt: str, schema: dict | None = None, max_tokens: int = 256) -> dict:
         model = self.resolve()

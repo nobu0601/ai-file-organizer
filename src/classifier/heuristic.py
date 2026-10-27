@@ -326,6 +326,12 @@ _SEG_SPLIT = re.compile(r"[_\-\s.・()（）\[\]【】「」,，、]+")
 _NOISE_SEG = re.compile(r"^(v(er)?\d+|\d+([年月日回号週期q]\d*)*|第\d+[回号表]|\d{4}[a-z]?\d*|[a-z]?\d+)$", re.IGNORECASE)
 
 
+def stem_terms(stem: str) -> list[str]:
+    """ファイル名を言葉に分ける（「デイサービス_連絡帳」→ ["デイサービス", "連絡帳"]）。"""
+    segs = [x for x in _SEG_SPLIT.split(stem) if x and not _NOISE_SEG.match(x)]
+    return [x.lower() if x.isascii() else x for x in segs] or [stem]
+
+
 def naming_terms(terms: list[str]) -> list[str]:
     """名前に使う言葉（中身がわからない一般的な言葉を後ろに回す）。"""
     good = [t for t in terms if t not in NAME_GENERIC]
