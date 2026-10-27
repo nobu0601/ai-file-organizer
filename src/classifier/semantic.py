@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 
 from classifier.base import ClassificationResult, Classifier, DocInput, DraftCategory, TaxonomyDraft
-from classifier.heuristic import (AGREE_MIN_CONFIDENCE, MIN_CLUSTER, HeuristicClassifier, describe, name_cluster, stem_terms, profile_weights,
+from classifier.heuristic import (AGREE_MIN_CONFIDENCE, MIN_CLUSTER, HeuristicClassifier, describe, draft_from_groups, force_split, name_cluster, stem_terms, profile_weights,
                                   rank_terms, unique_name)
 from classifier.ollama import OllamaClient, OllamaError
 from history.db import path_key
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_EMBED_MODEL = "bge-m3"
 # bge-m3 の類似度（cos）の目安。関係のない文書同士でも 0.45〜0.55 程度になる
+SPLIT_SIMS = [0.58, 0.63, 0.68, 0.73, 0.78, 0.84, 0.9]   # 分けるときに順に厳しくしていくまとまりの基準
 CLUSTER_SIM = 0.54           # これ以上似ているものを同じカテゴリにまとめる（平均連結）
 SUBCLUSTER_SIM = 0.60        # 大きなカテゴリを下位カテゴリに分ける基準
 SUBDIVIDE_MIN = 8
@@ -225,6 +226,25 @@ class SemanticClassifier(Classifier):
             draft = self.namer.name_draft(draft, docs)
             if getattr(self.namer, "last_error", ""):
                 self.last_error = self.namer.last_error
+        draft.source = self.name
+        return draft
+
+    def split_groups(self, docs: list[DocInput]) -> TaxonomyDraft:
+        """ファイル群を意味の近さで 2 つ以上に分ける案を作る。名前は LLM があれば LLM に考えてもらう。"""
+        try:
+            vecs = self.embed_docs(docs)
+        except OllamaError as e:
+            self.last_error = str(e)
+            draft = self.heuristic.split_groups(docs)
+        else:
+            if len(docs) < 2:
+                groups = [list(range(len(docs)))]
+            else:
+                groups = force_split(lambda lv: cluster_vectors(vecs, lv), SPLIT_SIMS,
+                                     lambda i, j: dot(vecs[i], vecs[j]), len(docs))
+            draft = draft_from_groups(docs, groups, self.name)
+        if self.namer is not None and len(draft.new_categories) > 1:
+            draft = self.namer.name_draft(draft, docs)
         draft.source = self.name
         return draft
 

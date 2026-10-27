@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
 from gui.common import UiBridge, fill_tree, make_tree, open_path
+from gui.split_dialog import SplitDialog
 from organizer.engine import Engine
 
 
@@ -44,6 +45,7 @@ class TaxonomyTab(ttk.Frame):
         ttk.Button(cb, text="名前変更", command=self.rename).pack(side="left")
         ttk.Button(cb, text="置き場所", command=self.reparent).pack(side="left", padx=4)
         ttk.Button(cb, text="説明変更", command=self.edit_description).pack(side="left")
+        ttk.Button(left, text="選んだフォルダを分ける…", command=self.split_category).pack(fill="x")
 
         self.detail = tk.Text(right, height=12, wrap="word")
         self.detail.pack(fill="x")
@@ -59,6 +61,7 @@ class TaxonomyTab(ttk.Frame):
         ttk.Button(pb, text="選んだ提案を採用", command=self.approve).pack(side="left")
         ttk.Button(pb, text="すべて採用", command=self.approve_all).pack(side="left", padx=4)
         ttk.Button(pb, text="採用しない", command=self.reject).pack(side="left")
+        ttk.Button(pb, text="分ける…", command=self.split_proposal).pack(side="left", padx=4)
         ttk.Button(pb, text="フォルダ分けの見直し案を作る", command=self.suggest).pack(side="left", padx=12)
 
         cf = ttk.LabelFrame(right, text="実際のフォルダとの照合", padding=4)
@@ -158,6 +161,42 @@ class TaxonomyTab(ttk.Frame):
         self.ui.run(self.engine.suggest_taxonomy_changes,
                     lambda ids: (messagebox.showinfo("変更案", f"{len(ids)} 件の変更案を作成しました" if ids
                                                      else "変更が必要な箇所は見つかりませんでした"), self.on_change()))
+
+    # ---------- 混ざったフォルダを分ける ----------
+    def _open_split(self, title, make_plan, apply, allow_exclude) -> None:
+        self.version_var.set("AI が分け方を考えています…（ローカル AI を使う場合は数分かかることがあります）")
+
+        def done(plan):
+            self.refresh()
+            SplitDialog(self, title, plan, lambda groups: self._after(apply(groups)), allow_exclude,
+                        self.engine.NOT_INCLUDED)
+
+        def failed(e):
+            self.refresh()
+            messagebox.showerror("分ける", str(e))
+
+        self.ui.run(make_plan, done, failed)
+
+    def _after(self, res):
+        self.on_change()
+        return res
+
+    def split_proposal(self) -> None:
+        sel = self.props.selection()
+        p = self._props.get(sel[0]) if len(sel) == 1 else None
+        if p is None or p.kind != "add":
+            messagebox.showinfo("分ける", "「AI の提案」から、分けたい「新しいフォルダ」の提案を 1 つ選んでください")
+            return
+        name = p.operations[0]["category"].get("category_name", "")
+        self._open_split(f"提案「{name}」を分ける", lambda: self.engine.plan_split_proposal(p.id),
+                         lambda groups: self.engine.apply_split_proposal(p.id, groups), True)
+
+    def split_category(self) -> None:
+        c = self._selected_cat()
+        if not c:
+            return
+        self._open_split(f"フォルダ「{c.category_name}」を分ける", lambda: self.engine.plan_split_category(c.category_id),
+                         lambda groups: self.engine.apply_split_category(c.category_id, groups), False)
 
     # ---------- 直接編集（ユーザーが承認者） ----------
     def _selected_cat(self):

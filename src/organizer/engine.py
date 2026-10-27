@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from classifier.base import ClassificationResult, Classifier, DocInput
-from classifier.heuristic import HeuristicClassifier
+from classifier.heuristic import HeuristicClassifier, profile_weights, rank_terms, stem_terms
 from classifier.model_select import recommended
 from classifier.ollama import OllamaClassifier, OllamaClient, OllamaError
 from classifier.semantic import SemanticClassifier
@@ -506,10 +506,14 @@ class Engine:
 
     def dest_root_for(self, path: str | Path) -> Path:
         """ファイルの移動先フォルダを作る場所。整理するフォルダの中に作る設定なら、そのファイルがあるフォルダ。"""
-        if self.settings.organize_in_place:
+        if self.settings.organize_in_place and self.settings.watch_folders:
             w = self._watch_root_for(str(path))
             if w:
                 return Path(w.path)
+            # 整理済みのフォルダの中にあるファイル（分けるときなど）は、それを含む整理するフォルダ
+            inside = [Path(w.path) for w in self.settings.watch_folders if is_within(path, w.path)]
+            if inside:
+                return max(inside, key=lambda r: len(str(r)))
         return self.organize_root
 
     def _update_protection(self) -> None:
@@ -804,6 +808,189 @@ class Engine:
             self._refresh_outputs()
             self._emit(type="taxonomy")
         return created
+
+    # ---------- 混ざったフォルダを分ける ----------
+    NOT_INCLUDED = "（このフォルダに入れない）"
+
+    def _docs_for(self, paths: list[str]) -> list[DocInput]:
+        docs = []
+        for f in dict.fromkeys(paths):
+            p = Path(f)
+            if not p.is_file():
+                continue
+            w = self._watch_root_for(f)
+            try:
+                docs.append(self.analyze(p, Path(w.path) if w else p.parent))
+            except OSError:
+                continue
+        return docs
+
+    def _split_plan(self, paths: list[str]) -> list[dict]:
+        docs = self._docs_for(paths)
+        if len(docs) < 2:
+            raise ValueError("分けるには、ファイルが 2 つ以上必要です")
+        clf = self.classifier
+        if hasattr(clf, "split_groups"):
+            draft = clf.split_groups(docs)
+        else:
+            draft = self.heuristic.split_groups(docs)
+            if hasattr(clf, "name_draft") and len(draft.new_categories) > 1:
+                draft = clf.name_draft(draft, docs)
+        return [{"name": c.name, "files": list(c.members)} for c in draft.new_categories]
+
+    def category_files(self, category_id: str) -> list[str]:
+        """フォルダに入っているファイル（移動済み）と、そのフォルダへの移動待ちのファイル。"""
+        c = self.store.taxonomy.get(category_id)
+        if c is None:
+            return []
+        out = []
+        for root in self.dest_roots():
+            folder = root.joinpath(*c.relative_path.split("/"))
+            out += [str(x) for x in iter_files(folder, False, None)] if folder.is_dir() else []
+        out += [r.path for r in self.db.list_files((F_READY,)) if r.category_id == category_id]
+        return list(dict.fromkeys(out))
+
+    def plan_split_proposal(self, proposal_id: str) -> list[dict]:
+        p = self.db.get_proposal(proposal_id)
+        if p is None or p.status != "pending" or p.kind != "add":
+            raise ValueError("分けられるのは、まだ採用していない「新しいフォルダ」の提案です")
+        return self._split_plan(p.related_files)
+
+    def plan_split_category(self, category_id: str) -> list[dict]:
+        c = self.store.taxonomy.get(category_id)
+        if c is None or not c.active:
+            raise ValueError("フォルダが見つかりません")
+        return self._split_plan(self.category_files(category_id))
+
+    def _group_spec(self, name: str, files: list[str], universe: list[DocInput], parent_id: str | None,
+                    category_id: str | None = None) -> dict:
+        members = [d for d in universe if str(d.path) in set(files)]
+        terms = (rank_terms(members, universe) if members else []) or stem_terms(name)
+        top = terms[:8]
+        return {"category_id": category_id or new_category_id(), "category_name": name.strip()[:80],
+                "parent_category_id": parent_id,
+                "description": f"「{name.strip()}」のファイルをまとめるフォルダ（分けて作成）",
+                "classification_rules": {"keywords": top,
+                                         "keyword_weights": profile_weights(members, universe, top) if members else {}},
+                "exclusion_rules": [], "examples": [Path(f).name for f in files[:5]]}
+
+    @staticmethod
+    def _check_groups(groups: list[dict]) -> list[dict]:
+        groups = [{"name": str(g.get("name", "")).strip(), "files": list(g.get("files", []))} for g in groups]
+        groups = [g for g in groups if g["files"]]
+        for g in groups:
+            if not g["name"]:
+                raise ValueError("名前が空のまとまりがあります")
+        names = [g["name"].lower() for g in groups if g["name"] != Engine.NOT_INCLUDED]
+        if len(names) != len(set(names)):
+            raise ValueError("同じ名前のまとまりが 2 つあります。名前を変えるか、1 つにまとめてください")
+        return groups
+
+    def apply_split_proposal(self, proposal_id: str, groups: list[dict]) -> tuple[bool, str]:
+        """まだ採用していない提案を、いくつかの提案に分け直す（採用はまだしない）。"""
+        p = self.db.get_proposal(proposal_id)
+        if p is None or p.status != "pending" or p.kind != "add":
+            return False, "分けられる提案がありません"
+        try:
+            groups = self._check_groups(groups)
+        except ValueError as e:
+            return False, str(e)
+        keep = [g for g in groups if g["name"] != self.NOT_INCLUDED]
+        if not keep:
+            return False, "どのまとまりにもファイルがありません"
+        old = p.operations[0]["category"]
+        universe = self._docs_for([f for g in keep for f in g["files"]])
+        for i, g in enumerate(keep):
+            # 1 つ目は元の提案のフォルダ ID を引き継ぐ（この提案の中に作る予定の提案が迷子にならないように）
+            spec = self._group_spec(g["name"], g["files"], universe, old.get("parent_category_id"),
+                                    old["category_id"] if i == 0 else None)
+            self.db.add_proposal(kind="add", title=f"新しいフォルダ「{spec['category_name']}」",
+                                 reason=f"「{old.get('category_name', '')}」を分けました（{len(g['files'])}個のファイル）",
+                                 operations=[{"op": "add", "category": spec}], related_files=g["files"],
+                                 source=p.source)
+        self.db.set_proposal_status(p.id, "superseded")
+        self._refresh_outputs()
+        self._emit(type="taxonomy")
+        return True, f"「{old.get('category_name', '')}」の提案を {len(keep)} 個に分けました。内容を見て採用してください。"
+
+    def apply_split_category(self, category_id: str, groups: list[dict]) -> tuple[bool, str]:
+        """採用済みのフォルダを分ける。元の名前のまとまりは元のフォルダに残し、ほかは新しいフォルダへ移動する。
+        移動は履歴に残り、あとから元に戻せる。"""
+        orig = self.store.taxonomy.get(category_id)
+        if orig is None or not orig.active:
+            return False, "フォルダが見つかりません"
+        try:
+            groups = [g for g in self._check_groups(groups) if g["name"] != self.NOT_INCLUDED]
+        except ValueError as e:
+            return False, str(e)
+        if len(groups) < 2 and not (groups and groups[0]["name"].lower() != orig.category_name.lower()):
+            return False, "2 つ以上のまとまりに分けてください"
+        universe = self._docs_for([f for g in groups for f in g["files"]])
+        siblings = {c.category_name.lower(): c for c in self.store.taxonomy.active()
+                    if c.parent_category_id == orig.parent_category_id}
+        ops, targets = [], []
+        for g in groups:
+            key = g["name"].lower()
+            if key in siblings:
+                target = siblings[key].category_id
+                spec = self._group_spec(g["name"], g["files"], universe, orig.parent_category_id, target)
+                ops.append({"op": "update", "category_id": target,
+                            "keywords": spec["classification_rules"]["keywords"]})
+            else:
+                spec = self._group_spec(g["name"], g["files"], universe, orig.parent_category_id)
+                ops.append({"op": "add", "category": spec})
+                target = spec["category_id"]
+            targets.append((target, g["files"]))
+        kept = any(t == category_id for t, _ in targets)
+        try:
+            self.store.apply(ops, reason=f"ユーザーが「{orig.category_name}」を {len(groups)} 個に分けました",
+                             pending_proposals=self.pending_proposal_titles())
+        except TaxonomyError as e:
+            return False, f"分けられません: {e}"
+        self._on_operations(ops)
+        self._create_folders({t for t, _ in targets}, self.dest_roots())
+        moved = failed = 0
+        tax = self.store.taxonomy
+        for target, files in targets:
+            cat = tax.get(target)
+            dests = []
+            for f in files:
+                rec = self.db.get_file(f)
+                if rec is not None and rec.status == F_READY:
+                    # まだ移動していないファイルは、移動先を付け替えるだけ
+                    self.db.upsert_file(f, status=F_READY, size=rec.size, mtime=rec.mtime, category_id=target,
+                                        confidence=rec.confidence, reason=f"「{cat.category_name}」に分けました",
+                                        detail=rec.detail, origin=rec.origin)
+                    continue
+                if target == category_id:
+                    continue
+                mv = self._move_to_category(Path(f), cat, None, f"「{orig.category_name}」から分けました")
+                if mv.ok:
+                    moved += 1
+                    dests.append(mv.dest)
+                else:
+                    failed += 1
+            self._learn(target, dests, "approved")
+        if not kept and not tax.children(category_id):
+            # 元のフォルダが空になったら、フォルダ分けから外し、空のフォルダも片付ける
+            try:
+                self.store.apply([{"op": "archive", "category_id": category_id}],
+                                 reason=f"「{orig.category_name}」を分けたため空になりました")
+                self._on_operations([{"op": "archive", "category_id": category_id}])
+            except TaxonomyError:
+                pass
+            for root in self.dest_roots():
+                try:
+                    root.joinpath(*orig.relative_path.split("/")).rmdir()   # 空のときだけ消える
+                except OSError:
+                    pass
+        self._refresh_outputs()
+        self._emit(type="taxonomy")
+        msg = f"「{orig.category_name}」を {len(groups)} 個に分け、{moved} 個のファイルを移動しました。"
+        if failed:
+            msg += f"\n{failed} 個は移動できませんでした（「履歴・元に戻す」に理由があります）。"
+        msg += "\n移動は「履歴・元に戻す」からいつでも元に戻せます。"
+        return True, msg
 
     def consistency(self) -> list[Mismatch]:
         hist = collect_history_paths(self.store.history_snapshots())

@@ -140,6 +140,17 @@ class HeuristicClassifier(Classifier):
             draft.notes.append(f"{len(draft.unassigned)} 件は他のファイルと共通点が少なく、カテゴリを作りませんでした")
         return draft
 
+    # ---------- 混ざったフォルダを分ける ----------
+    def split_groups(self, docs: list[DocInput]) -> TaxonomyDraft:
+        """ファイル群を 2 つ以上のまとまりに分ける案を作る（すべてのファイルをどれかに入れる）。"""
+        if len(docs) < 2:
+            return draft_from_groups(docs, [list(range(len(docs)))], self.name)
+        pos = {id(d): i for i, d in enumerate(docs)}
+        vecs = tfidf_vectors([d.features for d in docs])
+        groups = force_split(lambda lv: [[pos[id(d)] for d in g] for g in cluster(docs, lv)],
+                             SPLIT_LEVELS, lambda i, j: cosine(vecs[i], vecs[j]), len(docs))
+        return draft_from_groups(docs, groups, self.name)
+
     def _build(self, docs: list[DocInput], parent_id: str | None, depth: int, draft: TaxonomyDraft,
                used_names: set[str]) -> None:
         threshold = CLUSTER_THRESHOLD if depth == 0 else SUBCLUSTER_THRESHOLD + 0.08 * (depth - 1)
@@ -179,6 +190,49 @@ class HeuristicClassifier(Classifier):
 
 
 # ---------- 補助関数 ----------
+SPLIT_LEVELS = [0.08, 0.12, 0.18, 0.25, 0.34, 0.45, 0.6]   # 分けるときに順に厳しくしていくまとまりの基準
+
+
+def force_split(groups_at, levels, sim, n: int) -> list[list[int]]:
+    """まとまりの基準を少しずつ厳しくして、2 つ以上のまとまりが見つかるところで分ける。
+    1 件だけのものは、いちばん似ているまとまりに入れる（あとで画面で直せる）。"""
+    last = [list(range(n))]
+    for lv in levels:
+        gs = [g for g in groups_at(lv) if g]
+        covered = {i for g in gs for i in g}
+        gs += [[i] for i in range(n) if i not in covered]
+        big = [list(g) for g in gs if len(g) >= 2]
+        singles = [g[0] for g in gs if len(g) == 1]
+        if len(big) >= 2:
+            for i in singles:
+                best = max(big, key=lambda g: sum(sim(i, j) for j in g) / len(g))
+                best.append(i)
+            return sorted((sorted(g) for g in big), key=lambda g: (-len(g), g[0]))
+        if len(big) == 1 and singles:
+            last = [big[0], singles]   # 似ていないものだけを別にする案（さらに厳しい基準で見つからないとき用）
+        elif not big and len(singles) >= 2:
+            break
+    return [sorted(g) for g in last if g]
+
+
+def draft_from_groups(docs: list[DocInput], groups: list[list[int]], source: str) -> TaxonomyDraft:
+    draft = TaxonomyDraft(source=source)
+    used: set[str] = set()
+    for g in groups:
+        members = [docs[i] for i in g]
+        if not members:
+            continue
+        terms = rank_terms(members, docs) or stem_terms(members[0].path.stem)
+        name = unique_name(name_cluster(members, terms), used, terms)
+        used.add(name.lower())
+        top = terms[:8]
+        draft.new_categories.append(DraftCategory(
+            category_id=new_category_id(), name=name,
+            description=describe(terms[:3], [m.path.name for m in members], [m.features.ext for m in members]),
+            keywords=top, keyword_weights=profile_weights(members, docs, top), parent_category_id=None,
+            examples=[m.path.name for m in members[:5]], members=[str(m.path) for m in members]))
+    return draft
+
 def _damp(weights: dict[str, float]) -> dict[str, float]:
     # 長文の頻出語が支配しないよう平方根で抑える
     return {k: math.sqrt(v) for k, v in weights.items()}
